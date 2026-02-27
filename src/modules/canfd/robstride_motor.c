@@ -76,11 +76,8 @@ static fsp_err_t send_ext_frame(uint32_t ext_id, const uint8_t *data, uint8_t le
     tx_frame.type           = CAN_FRAME_TYPE_DATA;
     tx_frame.data_length_code = len;
 
-    if (data != NULL && len > 0)
-    {
-        memcpy(tx_frame.data, data, len);
-    }
-
+    if (data != NULL && len > 0) memcpy(tx_frame.data, data, len);
+    
     return canfd0_send_ext_frame(tx_frame);
 }
 
@@ -391,22 +388,14 @@ fsp_err_t robstride_gripper_release(uint8_t motor_id, float kp, float kd) {
 void robstride_parse_feedback(can_frame_t rx_frame) {
     uint32_t ext_id = rx_frame.id;
 
-    /* 提取通信类型（Bit28~24） */
+    /* 通信类型 */
     uint8_t cmd_type = (uint8_t)((ext_id >> 24) & 0x1FU);
-
-    /* 只处理类型2反馈帧 */
-    if (cmd_type != ROBSTRIDE_CMD_FEEDBACK) {
-        return;
-    }
-
-    /* 提取电机 CAN ID（Bit15~8） */
+    if (cmd_type != ROBSTRIDE_CMD_FEEDBACK) return;
+    
     uint8_t motor_can_id = (uint8_t)((ext_id >> 8) & 0xFFU);
-
-    /* 提取模式状态（Bit23~22）和故障信息（Bit21~16） */
     uint8_t mode_state  = (uint8_t)((ext_id >> 22) & 0x03U);
     uint8_t fault_flags = (uint8_t)((ext_id >> 16) & 0x3FU);
 
-    /* 在全局电机数组中查找对应电机 */
     robstride_motor_t *p_motor = NULL;
     for (uint8_t i = 0; i < ROBSTRIDE_MOTOR_NUM; i++) {
         if (g_motors[i].can_id == motor_can_id) {
@@ -415,10 +404,8 @@ void robstride_parse_feedback(can_frame_t rx_frame) {
         }
     }
 
-    if (p_motor == NULL) {
-        return;  /* 未知电机ID，忽略 */
-    }
-
+    if (p_motor == NULL) return; 
+    
     /* 解析数据区（高字节在前） */
     uint16_t pos_raw  = ((uint16_t)rx_frame.data[0] << 8) | rx_frame.data[1];
     uint16_t vel_raw  = ((uint16_t)rx_frame.data[2] << 8) | rx_frame.data[3];

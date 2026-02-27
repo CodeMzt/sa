@@ -68,7 +68,7 @@ typedef struct __attribute__((packed)) {
     char     wifi_psk[32];
     uint16_t debug_port;
 
-    /* 安全限位 [M1, M2, M3, M4] - 定点数，乘以100存储 */
+    /* 安全限位 定点数，乘以100存储 */
     int16_t  angle_min[4];
     int16_t  angle_max[4];
     uint16_t current_limit[4];
