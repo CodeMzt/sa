@@ -1,0 +1,35 @@
+/**
+ * @file  drv_wifi.h
+ * @brief W800 WiFi 模块驱动（AT 指令 + TCP JSON 协议）
+ * @date  2026-02-13
+ * @author Ma Ziteng
+ */
+
+#ifndef DRV_WIFI_H_
+#define DRV_WIFI_H_
+
+#include <stdint.h>
+#include <stdbool.h>
+
+/**
+ * @brief 初始化 W800 SoftAP 并启动 TCP Server
+ * @return 成功返回 true
+ */
+uint8_t wifi_init_ap_server(void);
+
+/**
+ * @brief AT 链路检测（AT+ → +OK）
+ */
+bool wifi_link_check(void);
+
+/**
+ * @brief 轮询处理 TCP 收到的 JSON 命令（需在任务循环中调用）
+ */
+void wifi_process_commands(void);
+
+/**
+ * @brief 获取 ISR 累计接收字节数（诊断用）
+ */
+uint32_t wifi_get_isr_rx_count(void);
+
+#endif /* DRV_WIFI_H_ */

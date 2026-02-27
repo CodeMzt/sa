@@ -1,0 +1,58 @@
+# Debug directories
+Debug/
+Release/
+
+# Object files
+*.o
+*.obj
+
+# Executables
+*.elf
+*.exe
+*.out
+
+# Linker output
+*.map
+
+# Intel hex files
+*.hex
+*.srec
+
+# Compilation database
+compile_commands.json
+
+# Eclipse/IDE files
+.settings/
+.cproject
+.project
+
+# Doxygen output
+docs/
+
+# Temporary files
+*.tmp
+*.temp
+
+# OS generated files
+Thumbs.db
+.DS_Store
+
+# Build system files
+Makefile
+makefile
+*.mk
+
+# Environment variables
+.env
+*.env
+
+# IDE specific files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Backup files
+*.bak
+*.backup

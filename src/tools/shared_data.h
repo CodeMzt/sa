@@ -1,0 +1,55 @@
+/*
+ * shared_data.h
+ *
+ *  Created on: 2026年1月24日
+ *      Author: Ma Ziteng
+ */
+
+#ifndef SHARED_DATA_H_
+#define SHARED_DATA_H_
+
+#include "hal_data.h"
+#include "robstride_motor.h"
+
+/* 器械枚举 */
+typedef enum {
+    INSTRUMENT_NONE = 0,
+    INSTRUMENT_FORCEPS = 1,
+    INSTRUMENT_HEMOSTAT = 2,
+    INSTRUMENT_SCALPEL = 3
+} instrument_t;
+
+typedef struct {
+    bool is_eth_connected;
+    bool is_can_connected;
+    bool is_mic_connected;
+    bool is_wifi_connected;
+
+    bool is_running;
+    bool is_voice_command_running;
+    bool is_emergency_stop;
+
+    char current_target[32];
+    char queue_list[64];
+
+    instrument_t act_queue[3];
+    uint8_t act_queue_count;
+} system_status_t;
+
+extern volatile system_status_t g_sys_status;
+
+/* 全局电机数组（由 robstride_motor.c 定义，此处导出） */
+extern robstride_motor_t g_motors[ROBSTRIDE_MOTOR_NUM];
+
+/* 发送命令队列 */
+extern QueueHandle_t can_tx_queue;
+
+/* 器械队列操作函数 */
+bool is_instrument_in_queue(instrument_t inst);
+bool add_instrument_to_queue(instrument_t inst);
+void remove_instrument_from_queue(uint8_t index);
+void clear_act_queue(void);
+const char* get_instrument_name(instrument_t inst);
+void update_queue_display_string(void);
+
+#endif /* SHARED_DATA_H_ */
