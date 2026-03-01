@@ -73,7 +73,6 @@ extern const ioport_instance_t g_ioport;
 
 /* IOPORT control structure. */
 extern ioport_instance_ctrl_t g_ioport_ctrl;
-extern QueueHandle_t can_tx_queue;
 extern QueueHandle_t g_log_queue;
 extern SemaphoreHandle_t g_uart_tx_sem;
 extern SemaphoreHandle_t g_log_mutex;

@@ -347,9 +347,9 @@
       <property id="module.driver.canfd.manual.data.sync_jump_width" value="1"/>
       <property id="module.driver.canfd.bitrate.manual.use_manual" value="module.driver.canfd.bitrate.manual.use_manual.disabled"/>
       <property id="module.driver.canfd.p_callback" value="canfd0_callback"/>
-      <property id="module.driver.canfd.txmb.int" value="module.driver.canfd.txmb.int.0"/>
+      <property id="module.driver.canfd.txmb.int" value="module.driver.canfd.txmb.int.32"/>
       <property id="module.driver.canfd.ch_err.int" value=""/>
-      <property id="module.driver.canfd.ipl" value="board.icu.common.irq.priority8"/>
+      <property id="module.driver.canfd.ipl" value="board.icu.common.irq.priority10"/>
       <property id="module.driver.canfd.afl_array" value="p_canfd0_afl"/>
     </module>
     <module id="module.aws.freertosplus.freertosplus_tcp.1273540642"/>
@@ -695,12 +695,6 @@
       <property id="module.driver.timer.gtiocb_disable_setting" value="module.driver.timer.gtiocb_disable_setting.gtioc_disable_prohibited"/>
     </module>
     <module id="module.freertos.heap.4.1043172701"/>
-    <object id="rtos.awsfreertos.object.queue.1486179057">
-      <property id="rtos.awsfreertos.object.queue.symbol" value="can_tx_queue"/>
-      <property id="rtos.awsfreertos.object.queue.item_size" value="5"/>
-      <property id="rtos.awsfreertos.object.queue.queue_length" value="5"/>
-      <property id="rtos.awsfreertos.object.queue.allocation" value="rtos.awsfreertos.object.queue.allocation.static"/>
-    </object>
     <object id="rtos.awsfreertos.object.queue.913415362">
       <property id="rtos.awsfreertos.object.queue.symbol" value="g_log_queue"/>
       <property id="rtos.awsfreertos.object.queue.item_size" value="128"/>
@@ -845,18 +839,18 @@
       <property id="config.driver.canfd.param_checking_enable" value="config.driver.canfd.param_checking_enable.bsp"/>
       <property id="config.driver.canfd.global_err.cb_channel" value="config.driver.canfd.global_err.cb_channel.0"/>
       <property id="config.driver.canfd.global_err.ipl" value="board.icu.common.irq.priority12"/>
-      <property id="config.driver.canfd.rxfifo.ipl" value="board.icu.common.irq.priority12"/>
+      <property id="config.driver.canfd.rxfifo.ipl" value="board.icu.common.irq.priority10"/>
       <property id="config.driver.canfd.fd.protocol_exception" value="config.driver.canfd.fd.protocol_exception.iso"/>
       <property id="config.driver.canfd.global_err.sources" value=""/>
       <property id="config.driver.canfd.tx_priority" value="config.driver.canfd.tx_priority.buffer"/>
       <property id="config.driver.canfd.dlc_check" value="config.driver.canfd.dlc_check.disabled"/>
-      <property id="config.driver.canfd.fd.overflow" value="config.driver.canfd.fd.overflow.reject"/>
+      <property id="config.driver.canfd.fd.overflow" value="config.driver.canfd.fd.overflow.truncate"/>
       <property id="config.driver.canfd.rxmb.number" value="0"/>
       <property id="config.driver.canfd.rxmb.size" value="config.driver.canfd.rxmb.size.8"/>
       <property id="config.driver.canfd.int_timer_prescaler" value="0"/>
       <property id="config.driver.canfd.rxfifo.0.enable" value="config.driver.canfd.rxfifo.0.enable.enabled"/>
-      <property id="config.driver.canfd.rxfifo.0.int_mode" value="enum.driver.canfd.fifo.int_mode.every_frame"/>
-      <property id="config.driver.canfd.rxfifo.0.int_threshold" value="enum.driver.canfd.fifo.int_threshold.1_2"/>
+      <property id="config.driver.canfd.rxfifo.0.int_mode" value="enum.driver.canfd.fifo.int_mode.threshold"/>
+      <property id="config.driver.canfd.rxfifo.0.int_threshold" value="enum.driver.canfd.fifo.int_threshold.1_4"/>
       <property id="config.driver.canfd.rxfifo.0.payload" value="enum.driver.canfd.fifo.payload.8"/>
       <property id="config.driver.canfd.rxfifo.0.depth" value="enum.driver.canfd.fifo.depth.16"/>
       <property id="config.driver.canfd.rxfifo.1.enable" value="config.driver.canfd.rxfifo.1.enable.disabled"/>
@@ -895,25 +889,25 @@
       <property id="config.driver.canfd.rxfifo.7.payload" value="enum.driver.canfd.fifo.payload.8"/>
       <property id="config.driver.canfd.rxfifo.7.depth" value="enum.driver.canfd.fifo.depth.16"/>
       <property id="config.driver.canfd.commonfifo.0.enable" value="config.driver.canfd.commonfifo.0.enable.disabled"/>
-      <property id="config.driver.canfd.commonfifo.0.mode" value="config.driver.canfd.commonfifo.0.mode.rx"/>
+      <property id="config.driver.canfd.commonfifo.0.mode" value="config.driver.canfd.commonfifo.0.mode.tx"/>
       <property id="config.driver.canfd.commonfifo.0.rxi_enable" value="config.driver.canfd.commonfifo.0.rxi_enable.disabled"/>
-      <property id="config.driver.canfd.commonfifo.0.txi_enable" value="config.driver.canfd.commonfifo.0.txi_enable.disabled"/>
-      <property id="config.driver.canfd.commonfifo.0.int_mode" value="config.driver.canfd.commonfifo.0.int_mode.threshold"/>
-      <property id="config.driver.canfd.commonfifo.0.int_threshold" value="enum.driver.canfd.fifo.int_threshold.1_2"/>
+      <property id="config.driver.canfd.commonfifo.0.txi_enable" value="config.driver.canfd.commonfifo.0.txi_enable.enabled"/>
+      <property id="config.driver.canfd.commonfifo.0.int_mode" value="config.driver.canfd.commonfifo.0.int_mode.every_frame"/>
+      <property id="config.driver.canfd.commonfifo.0.int_threshold" value="enum.driver.canfd.fifo.int_threshold.1_4"/>
       <property id="config.driver.canfd.commonfifo.0.payload" value="enum.driver.canfd.fifo.payload.8"/>
       <property id="config.driver.canfd.commonfifo.0.depth" value="enum.driver.canfd.fifo.depth.16"/>
       <property id="config.driver.canfd.commonfifo.0.txmb" value="module.driver.canfd.cfifo.tx_mb.32"/>
       <property id="config.driver.canfd.commonfifo.0.txdelay" value="0"/>
       <property id="config.driver.canfd.commonfifo.0.interval_source" value="config.driver.canfd.commonfifo.0.interval_source.refclk"/>
       <property id="config.driver.canfd.commonfifo.0.refclk_resolution" value="config.driver.canfd.commonfifo.0.refclk_resolution.1"/>
-      <property id="config.driver.canfd.commonfifo.1.enable" value="config.driver.canfd.commonfifo.1.enable.disabled"/>
-      <property id="config.driver.canfd.commonfifo.1.mode" value="config.driver.canfd.commonfifo.1.mode.rx"/>
+      <property id="config.driver.canfd.commonfifo.1.enable" value="config.driver.canfd.commonfifo.1.enable.enabled"/>
+      <property id="config.driver.canfd.commonfifo.1.mode" value="config.driver.canfd.commonfifo.1.mode.tx"/>
       <property id="config.driver.canfd.commonfifo.1.rxi_enable" value="config.driver.canfd.commonfifo.1.rxi_enable.disabled"/>
-      <property id="config.driver.canfd.commonfifo.1.txi_enable" value="config.driver.canfd.commonfifo.1.txi_enable.disabled"/>
-      <property id="config.driver.canfd.commonfifo.1.int_mode" value="config.driver.canfd.commonfifo.1.int_mode.threshold"/>
+      <property id="config.driver.canfd.commonfifo.1.txi_enable" value="config.driver.canfd.commonfifo.1.txi_enable.enabled"/>
+      <property id="config.driver.canfd.commonfifo.1.int_mode" value="config.driver.canfd.commonfifo.1.int_mode.every_frame"/>
       <property id="config.driver.canfd.commonfifo.1.int_threshold" value="enum.driver.canfd.fifo.int_threshold.1_2"/>
-      <property id="config.driver.canfd.commonfifo.1.payload" value="enum.driver.canfd.fifo.payload.8"/>
-      <property id="config.driver.canfd.commonfifo.1.depth" value="enum.driver.canfd.fifo.depth.16"/>
+      <property id="config.driver.canfd.commonfifo.1.payload" value="enum.driver.canfd.fifo.payload.48"/>
+      <property id="config.driver.canfd.commonfifo.1.depth" value="enum.driver.canfd.fifo.depth.8"/>
       <property id="config.driver.canfd.commonfifo.1.txmb" value="module.driver.canfd.cfifo.tx_mb.32"/>
       <property id="config.driver.canfd.commonfifo.1.txdelay" value="0"/>
       <property id="config.driver.canfd.commonfifo.1.interval_source" value="config.driver.canfd.commonfifo.1.interval_source.refclk"/>

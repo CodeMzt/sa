@@ -43,6 +43,13 @@ typedef struct __attribute__((packed)) {
 
 /** @brief 动作配置块（含 CRC） */
 typedef struct __attribute__((packed)) {
+    /**
+     * 七组动作说明：
+     * 第1、2组代表抓取和释放FORCEPS（镊子）
+     * 第3、4组代表抓取和释放HEMOSTAT（止血钳）
+     * 第5、6组代表抓取和释放SCALPEL（解剖刀）
+     * 第7组代表回复初始位置
+     */
     action_sequence_t groups[TOTAL_ACTION_GROUPS];
     uint32_t crc32;
 } motion_config_t;

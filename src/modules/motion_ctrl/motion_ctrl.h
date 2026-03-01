@@ -20,8 +20,10 @@
 #include "trajectory.h"
 
 /* 控制器配置参数 */
-#define MOTION_CTRL_LOOP_FREQ_HZ     200.0f  /* 控制频率 200Hz */
-#define MOTION_CTRL_LOOP_PERIOD_MS   5        /* 控制周期 5ms */
+#define TEACH_MODE_LOOP_FREQ_HZ      100.0f   /* 示教模式控制频率 100Hz */
+#define TEACH_MODE_LOOP_PERIOD_MS    10.0f   /* 示教模式控制周期 10ms */
+#define PLAYBACK_MODE_LOOP_FREQ_HZ   100.0f  /* 回放模式控制频率 100Hz */
+#define PLAYBACK_MODE_LOOP_PERIOD_MS 10.0f    /* 回放模式控制周期 10ms */
 
 /* 运行状态枚举 */
 typedef enum {
@@ -118,7 +120,7 @@ bool motion_ctrl_start_playback(motion_controller_t *ctrl, const action_sequence
 void motion_ctrl_stop(motion_controller_t *ctrl);
 
 /**
- * @brief 运控模式主控制循环（应在1kHz任务中调用）
+ * @brief 运控模式主控制循环（应按当前模式控制周期调用，默认100Hz）
  * @param ctrl 控制器实例指针
  * @param dt 时间步长（秒）
  * @note 根据当前状态计算控制输出并下发到电机
@@ -169,5 +171,18 @@ void motion_ctrl_emergency_stop(motion_controller_t *ctrl);
  * @param ctrl 控制器实例指针
  */
 void motion_ctrl_clear_emergency_stop(motion_controller_t *ctrl);
+
+
+/* 获取当前模式的控制周期（毫秒） */
+static inline float get_current_mode_period_ms(motion_state_t state) {
+    switch (state) {
+        case MOTION_STATE_TEACHING:
+            return TEACH_MODE_LOOP_PERIOD_MS;
+        case MOTION_STATE_PLAYBACK:
+            return PLAYBACK_MODE_LOOP_PERIOD_MS;
+        default:
+            return PLAYBACK_MODE_LOOP_PERIOD_MS;  /* 默认使用回放模式频率 */
+    }
+}
 
 #endif /* MOTION_CTRL_H_ */

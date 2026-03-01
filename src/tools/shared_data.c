@@ -18,7 +18,7 @@ volatile system_status_t g_sys_status = {
     .is_voice_command_running = false,
     .is_emergency_stop = false,
     .current_target = "",
-    .queue_list = "",
+    .queue_list = "", // 用于队列UI文本显示
     .act_queue = {INSTRUMENT_NONE, INSTRUMENT_NONE, INSTRUMENT_NONE},
     .act_queue_count = 0
 };

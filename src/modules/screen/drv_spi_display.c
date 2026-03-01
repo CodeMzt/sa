@@ -197,7 +197,7 @@ fsp_err_t lcd_spi_flush_data(uint8_t *data, uint32_t len)
  */
 static fsp_err_t wait_transfer_complete(void)
 {
-    if (xSemaphoreTake(g_spi_sem, pdMS_TO_TICKS(200)) == pdTRUE)
+    if (xSemaphoreTake(g_spi_sem, pdMS_TO_TICKS(50)) == pdTRUE)
     {
         return FSP_SUCCESS;
     }

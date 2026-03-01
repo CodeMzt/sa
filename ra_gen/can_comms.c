@@ -97,7 +97,7 @@ canfd_global_cfg_t g_canfd_global_cfg =
 #endif
 
 canfd_extended_cfg_t g_canfd0_extended_cfg =
-{ .p_afl = p_canfd0_afl, .txmb_txi_enable = ((1ULL << 0) | 0ULL), .error_interrupts = (0U),
+{ .p_afl = p_canfd0_afl, .txmb_txi_enable = ((1ULL << 32) | 0ULL), .error_interrupts = (0U),
 #if BSP_FEATURE_CANFD_FD_SUPPORT
     .p_data_timing      = &g_canfd0_data_timing_cfg,
 #else
@@ -110,7 +110,7 @@ canfd_instance_ctrl_t g_canfd0_ctrl;
 const can_cfg_t g_canfd0_cfg =
 { .channel = 0, .p_bit_timing = &g_canfd0_bit_timing_cfg, .p_callback = canfd0_callback, .p_extend =
           &g_canfd0_extended_cfg,
-  .p_context = NULL, .ipl = (8),
+  .p_context = NULL, .ipl = (10),
 #if defined(VECTOR_NUMBER_CAN0_COMFRX)
     .rx_irq             = VECTOR_NUMBER_CAN0_COMFRX,
 #else

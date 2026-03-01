@@ -15,6 +15,8 @@
 #include "drv_canfd.h"
 #include "robstride_motor.h"
 
+uint16_t count_can;
+
 /* ============================================================
  *  AFL 接收过滤器配置
  *  接收所有扩展帧数据帧（mask全0），路由到 RX FIFO0
@@ -44,18 +46,8 @@ const canfd_afl_entry_t p_canfd0_afl[CANFD_CFG_AFL_CH0_RULE_NUM] = {
  *  接收完成时将帧传递给协议层解析
  * ============================================================ */
 void canfd0_callback(can_callback_args_t *p_args) {
-    switch (p_args->event)
-    {
-        case CAN_EVENT_RX_COMPLETE:
-            /* 将接收帧路由到 RobStride 协议层解析 */
-            robstride_parse_feedback(p_args->frame);
-            break;
-
-        case CAN_EVENT_TX_COMPLETE:
-            break;
-
-        default:
-            break;
+    if (p_args->event == CAN_EVENT_RX_COMPLETE){
+        robstride_parse_feedback(p_args->frame);
     }
 }
 
@@ -89,7 +81,7 @@ fsp_err_t canfd0_init(void){
  * @param  tx_frame  已填好字段的帧结构体
  */
 fsp_err_t canfd0_send_ext_frame(can_frame_t tx_frame) {
-    return g_canfd0.p_api->write(g_canfd0.p_ctrl, CANFD_TX_MB_0, &tx_frame);
+    return g_canfd0.p_api->write(g_canfd0.p_ctrl, CANFD_TX_BUFFER_FIFO_COMMON_1, &tx_frame);
 }
 
 /**

@@ -340,18 +340,18 @@ FSP Configuration
     Parameter Checking: Default (BSP)
     Global Error Interrupt: Callback Channel: Channel 0
     Global Error Interrupt: Priority: Priority 12
-    Reception: FIFOs: Interrupt Priority: Priority 12
+    Reception: FIFOs: Interrupt Priority: Priority 10
     Flexible Data (FD): Protocol Exceptions: Enabled (ISO 11898-1)
     Global Error Interrupt: Sources: 
     Transmission Priority: Buffer Number
     DLC Check: Disabled
-    Flexible Data (FD): Payload Overflow: Reject
+    Flexible Data (FD): Payload Overflow: Truncate
     Reception: Message Buffers: Number of Buffers: 0
     Reception: Message Buffers: Payload Size: 8 bytes
     Interval Timer Prescaler: 0
     Reception: FIFOs: FIFO 0: Enable: Enabled
-    Reception: FIFOs: FIFO 0: Interrupt Mode: Every Frame
-    Reception: FIFOs: FIFO 0: Interrupt Threshold: 1/2 full
+    Reception: FIFOs: FIFO 0: Interrupt Mode: At Threshold Value
+    Reception: FIFOs: FIFO 0: Interrupt Threshold: 1/4 full
     Reception: FIFOs: FIFO 0: Payload Size: 8 bytes
     Reception: FIFOs: FIFO 0: Depth: 16 stages
     Reception: FIFOs: FIFO 1: Enable: Disabled
@@ -390,25 +390,25 @@ FSP Configuration
     Reception: FIFOs: FIFO 7: Payload Size: 8 bytes
     Reception: FIFOs: FIFO 7: Depth: 16 stages
     Common FIFOs: FIFO 0: Enable: Disabled
-    Common FIFOs: FIFO 0: Mode: Receive
+    Common FIFOs: FIFO 0: Mode: Transmit
     Common FIFOs: FIFO 0: RX Interrupt Enable: Disabled
-    Common FIFOs: FIFO 0: TX Interrupt Enable: Disabled
-    Common FIFOs: FIFO 0: Interrupt Mode: Threshold
-    Common FIFOs: FIFO 0: Interrupt Threshold: 1/2 full
+    Common FIFOs: FIFO 0: TX Interrupt Enable: Enabled
+    Common FIFOs: FIFO 0: Interrupt Mode: Every frame
+    Common FIFOs: FIFO 0: Interrupt Threshold: 1/4 full
     Common FIFOs: FIFO 0: Payload Size: 8 bytes
     Common FIFOs: FIFO 0: Depth: 16 stages
     Common FIFOs: FIFO 0: TX Message Buffer: TX Message Buffer 32
     Common FIFOs: FIFO 0: Interval TX Delay: 0
     Common FIFOs: FIFO 0: Interval Timer: Reference clock
     Common FIFOs: FIFO 0: Interval Timer Reference Clock Resolution: x1
-    Common FIFOs: FIFO 1: Enable: Disabled
-    Common FIFOs: FIFO 1: Mode: Receive
+    Common FIFOs: FIFO 1: Enable: Enabled
+    Common FIFOs: FIFO 1: Mode: Transmit
     Common FIFOs: FIFO 1: RX Interrupt Enable: Disabled
-    Common FIFOs: FIFO 1: TX Interrupt Enable: Disabled
-    Common FIFOs: FIFO 1: Interrupt Mode: Threshold
+    Common FIFOs: FIFO 1: TX Interrupt Enable: Enabled
+    Common FIFOs: FIFO 1: Interrupt Mode: Every frame
     Common FIFOs: FIFO 1: Interrupt Threshold: 1/2 full
-    Common FIFOs: FIFO 1: Payload Size: 8 bytes
-    Common FIFOs: FIFO 1: Depth: 16 stages
+    Common FIFOs: FIFO 1: Payload Size: 48 bytes
+    Common FIFOs: FIFO 1: Depth: 8 stages
     Common FIFOs: FIFO 1: TX Message Buffer: TX Message Buffer 32
     Common FIFOs: FIFO 1: Interval TX Delay: 0
     Common FIFOs: FIFO 1: Interval Timer: Reference clock
@@ -727,9 +727,9 @@ FSP Configuration
       Bitrate: Manual: Data: Sync Jump Width (Tq): 1
       Bitrate: Manual: Use manual settings: No
       Interrupts: Callback: canfd0_callback
-      Transmit Interrupts: TXMB 0
+      Transmit Interrupts: TXMB 32
       Channel Error Interrupts: 
-      Interrupts: Channel Interrupt Priority Level: Priority 8
+      Interrupts: Channel Interrupt Priority Level: Priority 10
       Filter List Array: p_canfd0_afl
       
   Thread "net_connect"
@@ -1089,12 +1089,6 @@ FSP Configuration
       Extra Features: Output Disable: GTIOCA Disable Setting: Disable Prohibited
       Extra Features: Output Disable: GTIOCB Disable Setting: Disable Prohibited
       
-  Object "can_tx_queue Queue"
-    Symbol: can_tx_queue
-    Item Size (Bytes): 5
-    Queue Length (Items): 5
-    Memory Allocation: Static
-    
   Object "g_log_queue Queue"
     Symbol: g_log_queue
     Item Size (Bytes): 128

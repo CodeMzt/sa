@@ -55,10 +55,9 @@ bool motion_ctrl_init(motion_controller_t *ctrl, const motion_ctrl_config_t *con
         memcpy(&ctrl->config, config, sizeof(motion_ctrl_config_t));
     } else {
         memcpy(&ctrl->config, &DEFAULT_CONFIG, sizeof(motion_ctrl_config_t));
+        /* 仅默认配置时填充默认重力参数 */
+        grav_init_default(&ctrl->config.grav_params);
     }
-    
-    /* 初始化重力补偿参数（如果未设置） */
-    grav_init_default(&ctrl->config.grav_params);
     
     /* 初始化轨迹控制器 */
     traj_reset(&ctrl->trajectory);
@@ -117,7 +116,6 @@ bool motion_ctrl_start_teaching(motion_controller_t *ctrl)
         LOG_E("motion_ctrl_start_teaching: controller not initialized");
         return false;
     }
-    
     if (ctrl->state != MOTION_STATE_IDLE) {
         LOG_W("Cannot start teaching while in state %d", ctrl->state);
         return false;
@@ -152,8 +150,8 @@ bool motion_ctrl_start_playback(motion_controller_t *ctrl, const action_sequence
         return false;
     }
     
-    if (seq->frame_count < 2) {
-        LOG_E("Action sequence must have at least 2 frames");
+    if (seq->frame_count < 2 || seq->frame_count > MAX_FRAMES_PER_SEQ) {
+        LOG_E("Action sequence frame_count invalid: %u", (unsigned int)seq->frame_count);
         return false;
     }
     
@@ -268,7 +266,8 @@ static void teach_control_loop(motion_controller_t *ctrl) {
  */
 static void playback_control_loop(motion_controller_t *ctrl, float dt) {
     if (!ctrl->seq_running) return;
-    
+
+    float prev_time = ctrl->seq_start_time;
     ctrl->seq_start_time += dt;
     
     float q_target[4] = {0};
@@ -324,20 +323,22 @@ static void playback_control_loop(motion_controller_t *ctrl, float dt) {
         robstride_motion_control(joint_ids[i], q_target[i], v, kp, kd, torque);
     }
     
-    /* 处理段完成事件（例如夹爪动作） */
-    if (seg_done) {
-        /* 获取当前段的动作 */
-        uint32_t current_seg = ctrl->trajectory.current_segment;
-        if (current_seg < MAX_FRAMES_PER_SEQ - 1) {
-            uint8_t action = ctrl->trajectory.segments[current_seg][0].action;
-            
-            /* 处理夹爪动作 */
-            if (action == ACTION_GRIP) {
-                /* TODO: 调用夹爪抓取函数 */
-                LOG_I("Segment %d: GRIP action triggered", current_seg);
-            } else if (action == ACTION_RELEASE) {
-                /* TODO: 调用夹爪释放函数 */
-                LOG_I("Segment %d: RELEASE action triggered", current_seg);
+    /* 处理段边界事件（例如夹爪动作）
+     * 使用时间跨越检测，避免1ms阈值在10ms控制周期下漏触发。
+     */
+    if (ctrl->trajectory.total_segments > 0U) {
+        float boundary_time = 0.0f;
+        for (uint16_t seg = 0; seg < ctrl->trajectory.total_segments; seg++) {
+            boundary_time += ctrl->trajectory.segments[seg][0].duration;
+            if ((prev_time < boundary_time) && (ctrl->seq_start_time >= boundary_time)) {
+                uint8_t action = ctrl->trajectory.segments[seg][0].action;
+                if (action == ACTION_GRIP) {
+                    /* TODO: 调用夹爪抓取函数 */
+                    LOG_I("Segment %lu: GRIP action triggered", (unsigned long)seg);
+                } else if (action == ACTION_RELEASE) {
+                    /* TODO: 调用夹爪释放函数 */
+                    LOG_I("Segment %lu: RELEASE action triggered", (unsigned long)seg);
+                }
             }
         }
     }
@@ -355,6 +356,7 @@ static void playback_control_loop(motion_controller_t *ctrl, float dt) {
  */
 void motion_ctrl_loop(motion_controller_t *ctrl, float dt) {
     if (ctrl == NULL || !ctrl->is_initialized || ctrl->emergency_stop) return;
+    if (dt <= 0.0f) return;
     
     switch (ctrl->state) {
         case MOTION_STATE_TEACHING:

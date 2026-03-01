@@ -317,12 +317,13 @@ fsp_err_t robstride_set_speed(uint8_t motor_id,
 
     if (limit_cur > 0.0f) {
         err = robstride_write_param_float(motor_id, ROBSTRIDE_PARAM_LIMIT_CUR, limit_cur);
-        if (err != FSP_SUCCESS) return err;
+        if (err != FSP_SUCCESS) return 1;
     }
+
 
     if (acc_rad > 0.0f) {
         err = robstride_write_param_float(motor_id, ROBSTRIDE_PARAM_ACC_RAD, acc_rad);
-        if (err != FSP_SUCCESS) return err;
+        if (err != FSP_SUCCESS) return 2;
     }
 
     return robstride_write_param_float(motor_id, ROBSTRIDE_PARAM_SPD_REF, speed_rps);
@@ -390,7 +391,7 @@ void robstride_parse_feedback(can_frame_t rx_frame) {
 
     /* 通信类型 */
     uint8_t cmd_type = (uint8_t)((ext_id >> 24) & 0x1FU);
-    if (cmd_type != ROBSTRIDE_CMD_FEEDBACK) return;
+    if (cmd_type != ROBSTRIDE_CMD_FEEDBACK && cmd_type!= ROBSTRIDE_CMD_AUTO_REPORT) return;
     
     uint8_t motor_can_id = (uint8_t)((ext_id >> 8) & 0xFFU);
     uint8_t mode_state  = (uint8_t)((ext_id >> 22) & 0x03U);
@@ -419,4 +420,42 @@ void robstride_parse_feedback(can_frame_t rx_frame) {
     p_motor->feedback.temperature = (float)temp_raw / 10.0f;  /* 温度 *10 存储 */
     p_motor->feedback.mode_state  = mode_state;
     p_motor->feedback.fault_flags = fault_flags;
+
+    count_can++;
+}
+
+/* ============================================================
+ *  主动上报控制函数实现
+ * ============================================================ */
+
+/**
+ * @brief  开启电机主动上报功能（通信类型24）
+ */
+fsp_err_t robstride_enable_auto_report(uint8_t motor_id) {
+    // 使用通信类型24（0x18）开启主动上报
+    uint32_t ext_id = build_ext_id(ROBSTRIDE_CMD_AUTO_REPORT,
+                                   (uint16_t)ROBSTRIDE_MASTER_ID << 8,
+                                   motor_id);
+    uint8_t data[8] = {1,2,3,4,5,6,1,0};// 开启主动上报
+    return send_ext_frame(ext_id, data, 8);
+}
+
+/**
+ * @brief  关闭电机主动上报功能（通信类型24）
+ */
+fsp_err_t robstride_disable_auto_report(uint8_t motor_id) {
+    // 使用通信类型24（0x18）关闭主动上报
+    uint32_t ext_id = build_ext_id(ROBSTRIDE_CMD_AUTO_REPORT,
+                                   (uint16_t)ROBSTRIDE_MASTER_ID << 8,
+                                   motor_id);
+    uint8_t data[8] = {1,2,3,4,5,6,0,0};// 关闭主动上报
+    return send_ext_frame(ext_id, data, 8);
+}
+
+/**
+ * @brief  设置电机主动上报时间间隔（通信类型18写入EPScan_time参数）
+ */
+fsp_err_t robstride_set_auto_report_interval(uint8_t motor_id, uint16_t interval_value) {
+    // 使用通信类型18（0x12）写入EPScan_time参数
+    return robstride_write_param_uint8(motor_id, ROBSTRIDE_PARAM_EPS_CAN_TIME, (uint8_t)interval_value);
 }

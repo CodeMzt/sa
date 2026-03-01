@@ -103,12 +103,6 @@ rm_freertos_plus_tcp_instance_t g_freertos_plus_tcp0 =
 ioport_instance_ctrl_t g_ioport_ctrl;
 const ioport_instance_t g_ioport =
 { .p_api = &g_ioport_on_ioport, .p_ctrl = &g_ioport_ctrl, .p_cfg = &g_bsp_pin_cfg, };
-QueueHandle_t can_tx_queue;
-#if 1
-StaticQueue_t can_tx_queue_memory;
-uint8_t can_tx_queue_queue_memory[5 * 5];
-#endif
-void rtos_startup_err_callback(void *p_instance, void *p_data);
 QueueHandle_t g_log_queue;
 #if 1
 StaticQueue_t g_log_queue_memory;
@@ -132,23 +126,6 @@ StaticSemaphore_t audio_semaphore_memory;
 void rtos_startup_err_callback(void *p_instance, void *p_data);
 void g_common_init(void)
 {
-    can_tx_queue =
-#if 1
-            xQueueCreateStatic (
-#else
-                xQueueCreate(
-                #endif
-                                5,
-                                5
-#if 1
-                                ,
-                                &can_tx_queue_queue_memory[0], &can_tx_queue_memory
-#endif
-                                );
-    if (NULL == can_tx_queue)
-    {
-        rtos_startup_err_callback (can_tx_queue, 0);
-    }
     g_log_queue =
 #if 1
             xQueueCreateStatic (

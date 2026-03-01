@@ -32,7 +32,7 @@ void traj_reset(traj_controller_t *traj)
  * @brief 从动作序列初始化轨迹
  */
 bool traj_init_from_sequence(traj_controller_t *traj, const action_sequence_t *seq) {
-    if (traj == NULL || seq == NULL || seq->frame_count < 2) {
+    if (traj == NULL || seq == NULL || seq->frame_count < 2 || seq->frame_count > MAX_FRAMES_PER_SEQ) {
         return false;
     }
     
@@ -94,11 +94,7 @@ bool traj_init_from_sequence(traj_controller_t *traj, const action_sequence_t *s
                 float seg_duration = (float)seq->frames[seg].duration_ms / 1000.0f;
                 traj->segments[seg][joint].duration = seg_duration;
             }
-            
-            /* 保存段起始时间 */
-            traj->segments[seg][joint].a[4] = time_points[seg];
-            /* 保存段结束时间 */
-            traj->segments[seg][joint].a[5] = time_points[seg + 1];
+
             /* 保存动作（下一关键帧的动作） */
             if (seg < seq->frame_count - 1) {
                 traj->segments[seg][joint].action = seq->frames[seg + 1].action;
@@ -250,6 +246,9 @@ void traj_eval(traj_controller_t *traj, float t, float q_out[4], float v_out[4],
     
     /* 计算段内时间 */
     float segment_time = t - segment_start_time;
+
+    /* 记录当前段 */
+    traj->current_segment = segment;
     
     /* 检查是否接近段末尾（用于seg_done判断） */
     if (seg_done != NULL) {

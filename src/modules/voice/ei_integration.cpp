@@ -7,7 +7,7 @@
 #include "edge-impulse-sdk/classifier/ei_run_classifier.h"
 #include "voice_command.h"
 #include <stdio.h>
-#include <string.h> // 需要用到 memset
+#include <string.h> 
 #include "sys_log.h"
 #include "edge-impulse-sdk/CMSIS/DSP/Include/arm_math.h"
 
@@ -16,9 +16,6 @@
 // 每次推理的滑动步长 (250ms = 2000 samples @ 8kHz)
 #define INFERENCE_STRIDE   (2000)
 
-// 【新增】决策周期：每隔多少采样点输出一次最终结果？
-// 建议设置为等于模型输入窗口大小 (例如 8000)，或者更大。
-// 这里设为模型窗口大小，意味着大约每 1秒 出一次结果（如果窗口是1秒）
 #define DECISION_WINDOW    (EI_CLASSIFIER_DSP_INPUT_FRAME_SIZE)
 
 // 环形缓冲区
@@ -26,8 +23,6 @@ static int16_t audio_buffer[AUDIO_BUFFER_SIZE];
 static uint32_t buf_write_index = 0;
 static bool buffer_full_enough = false;
 
-/* * 【新增】平滑处理用的静态变量
- */
 // 存储每个类别的累加得分
 static float g_score_accumulator[EI_CLASSIFIER_LABEL_COUNT] = {0};
 // 记录在当前决策周期内运行了多少次推理

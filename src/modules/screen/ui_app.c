@@ -108,7 +108,6 @@ static void event_queue_back_cb(lv_event_t * e);
 static void event_voice_queue_back_cb(lv_event_t * e);
 static lv_obj_t* create_status_label(lv_obj_t * parent, const char* text);
 
-/* 示教模式函数前向声明 */
 static void create_teach_page(void);
 static void event_teach_submode_cb(lv_event_t * e);
 static void create_teach_monitor_page(void);
@@ -1226,7 +1225,6 @@ static void create_teach_record_frames_page(uint8_t group_idx) {
     lv_obj_add_event_cb(btn_dur_minus, event_teach_frame_duration_minus_cb, LV_EVENT_CLICKED, (void*)&dur_ctx);
     lv_obj_add_event_cb(btn_dur_plus, event_teach_frame_duration_plus_cb, LV_EVENT_CLICKED, (void*)&dur_ctx);
 
-    /* === 定时器更新角度（使用全局 timer） === */
     if (g_teach_record_angle_timer) {
         lv_timer_del(g_teach_record_angle_timer);
     }
@@ -1245,7 +1243,7 @@ static void create_teach_record_frames_page(uint8_t group_idx) {
     lv_label_set_text(lbl_back, "BACK");
     lv_obj_center(lbl_back);
 
-    /* === SAVE 按钮（正中间，仿照 touch mode START 位置） === */
+    /* === SAVE 按钮（正中间，和 touch mode 的 START 一样） === */
     lv_obj_t * btn_save = lv_btn_create(lv_scr_act());
     lv_obj_set_size(btn_save, 110, 60);
     lv_obj_align(btn_save, LV_ALIGN_BOTTOM_MID, 0, -10);

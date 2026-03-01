@@ -15,6 +15,8 @@
 #include <string.h>
 #include "can_comms.h"
 
+extern uint16_t count_can;
+
 /**
  * @brief  初始化 CANFD0 外设，切换到正常工作模式
  * @return FSP_SUCCESS 或错误码
