@@ -83,7 +83,7 @@ static int process_vote_window(int inference_result) {
 
 void voice_command_entry(void *pvParameters) {
     FSP_PARAMETER_NOT_USED(pvParameters);
-    vTaskDelay(100);
+    vTaskDelay(pdMS_TO_TICKS(1000));
     fsp_err_t err = mic_driver_instance.init();
     if (err != FSP_SUCCESS) {
         LOG_E("Mic Init Failed");

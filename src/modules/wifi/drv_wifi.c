@@ -14,6 +14,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <ctype.h>
+#include <limits.h>
 
 /* ---- 常量 ---- */
 #define RX_BUF_SIZE    4096
@@ -122,6 +123,25 @@ bool wifi_link_check(void) { return send_at("AT+\r\n", "+OK", 500); }
  * @return 初始化成功返回 true，否则返回 false
  */
 uint8_t wifi_init_ap_server(void) {
+    const sys_config_t *cfg = nvm_get_sys_config();
+    const char *ssid = (cfg->wifi_ssid[0] != '\0') ? cfg->wifi_ssid : "SurgicalArm_Debug";
+    const char *psk = (cfg->wifi_psk[0] != '\0') ? cfg->wifi_psk : "fdudebug";
+    uint16_t debug_port = (cfg->debug_port != 0U) ? cfg->debug_port : 8080U;
+    char cmd_apssid[96];
+    char cmd_apkey[128];
+    char cmd_apnip[128];
+    char cmd_skct[96];
+
+    snprintf(cmd_apssid, sizeof(cmd_apssid), "AT+APSSID=%s\r\n", ssid);
+    snprintf(cmd_apkey, sizeof(cmd_apkey), "AT+APKEY=1,0,%s\r\n", psk);
+    snprintf(cmd_apnip, sizeof(cmd_apnip),
+             "AT+APNIP=1,%u.%u.%u.%u,%u.%u.%u.%u,%u.%u.%u.%u,%u.%u.%u.%u\r\n",
+             cfg->ip_addr[0], cfg->ip_addr[1], cfg->ip_addr[2], cfg->ip_addr[3],
+             cfg->netmask[0], cfg->netmask[1], cfg->netmask[2], cfg->netmask[3],
+             cfg->gateway[0], cfg->gateway[1], cfg->gateway[2], cfg->gateway[3],
+             cfg->gateway[0], cfg->gateway[1], cfg->gateway[2], cfg->gateway[3]);
+    snprintf(cmd_skct, sizeof(cmd_skct), "AT+SKCT=0,1,0,%u,%u\r\n", debug_port, debug_port);
+
     if (g_uart_wifi.p_api->open(g_uart_wifi.p_ctrl, g_uart_wifi.p_cfg) != FSP_SUCCESS)
         return false;
     LOG_D("WIFI UART opened.");
@@ -132,16 +152,16 @@ uint8_t wifi_init_ap_server(void) {
 
     bool ok = true;
     ok &= send_at("AT+WPRT=2\r\n",          "+OK", 1000);
-    ok &= send_at("AT+APSSID=SurgicalArm_Debug\r\n", "+OK", 1000);
+    ok &= send_at(cmd_apssid, "+OK", 1000);
     ok &= send_at("AT+APENCRY=4\r\n",       "+OK", 1000);
-    ok &= send_at("AT+APKEY=1,0,fdudebug\r\n", "+OK", 1000);
-    ok &= send_at("AT+APNIP=1,192.168.4.1,255.255.255.0,192.168.4.1,192.168.4.1\r\n", "+OK", 1000);
+    ok &= send_at(cmd_apkey, "+OK", 1000);
+    ok &= send_at(cmd_apnip, "+OK", 1000);
     ok &= send_at("AT+PMTF\r\n",            "+OK", 1000);
     send_at("AT+Z\r\n", NULL, 0);
     vTaskDelay(pdMS_TO_TICKS(2000));
     ok &= send_at("AT+WJOIN\r\n",           "+OK", 5000);
     ok &= send_at("AT+SKRPTM=1\r\n",        "+OK", 1000);
-    ok &= send_at("AT+SKCT=0,1,0,8080,8080\r\n", "+OK", 2000);
+    ok &= send_at(cmd_skct, "+OK", 2000);
     clear_rx();
     return ok;
 }
@@ -488,13 +508,25 @@ static bool parse_decimal_i16(const char *js, const char *key, int16_t *val) {
     int32_t v = 0;
     while (*p >= '0' && *p <= '9') { v = v * 10 + (*p - '0'); p++; }
     int32_t frac = 0;
+    int32_t frac_digits = 0;
     if (*p == '.') {
         p++;
-        while (*p >= '0' && *p <= '9' && frac < 100) { frac = frac * 10 + (*p - '0'); p++; }
+        while (*p >= '0' && *p <= '9' && frac_digits < 2) {
+            frac = frac * 10 + (*p - '0');
+            frac_digits++;
+            p++;
+        }
     }
     while (*p >= '0' && *p <= '9') p++;
+    if (frac_digits == 1) {
+        frac *= 10;
+    }
     v = v * 100 + frac;
-    *val = (int16_t)(sign * v);
+    int32_t scaled = sign * v;
+    if (scaled < INT16_MIN || scaled > INT16_MAX) {
+        return false;
+    }
+    *val = (int16_t)scaled;
     return true;
 }
 
@@ -518,12 +550,23 @@ static bool parse_decimal_u16(const char *js, const char *key, uint16_t *val) {
     int32_t v = 0;
     while (*p >= '0' && *p <= '9') { v = v * 10 + (*p - '0'); p++; }
     int32_t frac = 0;
+    int32_t frac_digits = 0;
     if (*p == '.') {
         p++;
-        while (*p >= '0' && *p <= '9' && frac < 100) { frac = frac * 10 + (*p - '0'); p++; }
+        while (*p >= '0' && *p <= '9' && frac_digits < 2) {
+            frac = frac * 10 + (*p - '0');
+            frac_digits++;
+            p++;
+        }
     }
     while (*p >= '0' && *p <= '9') p++;
+    if (frac_digits == 1) {
+        frac *= 10;
+    }
     v = v * 100 + frac;
+    if (v < 0 || v > UINT16_MAX) {
+        return false;
+    }
     *val = (uint16_t)v;
     return true;
 }
@@ -548,16 +591,29 @@ static bool parse_decimal_i16_array(const char *js, const char *key, int16_t *ar
         if (*p == '\0' || *p == ']') return false;
         int sign = 1;
         if (*p == '-') { sign = -1; p++; }
+        else if (*p == '+') { p++; }
         int32_t v = 0;
         while (*p >= '0' && *p <= '9') { v = v * 10 + (*p - '0'); p++; }
         int32_t frac = 0;
+        int32_t frac_digits = 0;
         if (*p == '.') {
             p++;
-            while (*p >= '0' && *p <= '9' && frac < 100) { frac = frac * 10 + (*p - '0'); p++; }
+            while (*p >= '0' && *p <= '9' && frac_digits < 2) {
+                frac = frac * 10 + (*p - '0');
+                frac_digits++;
+                p++;
+            }
         }
         while (*p >= '0' && *p <= '9') p++;
+        if (frac_digits == 1) {
+            frac *= 10;
+        }
         v = v * 100 + frac;
-        arr[i] = (int16_t)(sign * v);
+        int32_t scaled = sign * v;
+        if (scaled < INT16_MIN || scaled > INT16_MAX) {
+            return false;
+        }
+        arr[i] = (int16_t)scaled;
         p++;
         while (*p == ' ' || *p == ',') p++;
     }
@@ -585,12 +641,23 @@ static bool parse_decimal_u16_array(const char *js, const char *key, uint16_t *a
         int32_t v = 0;
         while (*p >= '0' && *p <= '9') { v = v * 10 + (*p - '0'); p++; }
         int32_t frac = 0;
+        int32_t frac_digits = 0;
         if (*p == '.') {
             p++;
-            while (*p >= '0' && *p <= '9' && frac < 100) { frac = frac * 10 + (*p - '0'); p++; }
+            while (*p >= '0' && *p <= '9' && frac_digits < 2) {
+                frac = frac * 10 + (*p - '0');
+                frac_digits++;
+                p++;
+            }
         }
         while (*p >= '0' && *p <= '9') p++;
+        if (frac_digits == 1) {
+            frac *= 10;
+        }
         v = v * 100 + frac;
+        if (v < 0 || v > UINT16_MAX) {
+            return false;
+        }
         arr[i] = (uint16_t)v;
         p++;
         while (*p == ' ' || *p == ',') p++;

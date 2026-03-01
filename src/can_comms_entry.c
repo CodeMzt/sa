@@ -311,7 +311,7 @@ void user_on_estop_reset(void) {
  */
 void can_comms_entry(void *pvParameters) {
     FSP_PARAMETER_NOT_USED(pvParameters);
-    vTaskDelay(pdMS_TO_TICKS(100));
+    vTaskDelay(pdMS_TO_TICKS(3000));
     LOG_I("CAN communication thread started.");
     
     fsp_err_t err;

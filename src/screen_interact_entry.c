@@ -13,6 +13,7 @@ extern void canfd_link_check(void);
 
 void screen_interact_entry(void *pvParameters) {
     FSP_PARAMETER_NOT_USED(pvParameters);
+    vTaskDelay(pdMS_TO_TICKS(3200));
 
     lv_port_init();
     ui_app_init();

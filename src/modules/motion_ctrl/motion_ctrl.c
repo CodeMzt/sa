@@ -8,8 +8,11 @@
 #include "motion_ctrl.h"
 #include "sys_log.h"
 #include "shared_data.h"
+#include "nvm_manager.h"
 #include <string.h>
 #include <math.h>
+
+#define DEG2RAD_F 0.01745329251994329577f
 
 /* 全局控制器实例 */
 motion_controller_t g_motion_ctrl = {0};
@@ -275,6 +278,22 @@ static void playback_control_loop(motion_controller_t *ctrl, float dt) {
     bool seg_done = false, seq_done = false;
     
     traj_eval(&ctrl->trajectory, ctrl->seq_start_time, q_target, v_target, &seg_done, &seq_done);
+
+    const sys_config_t *sys_cfg = nvm_get_sys_config();
+    for (int i = 0; i < 4; i++) {
+        float q_min = ((float)sys_cfg->angle_min[i] * 0.01f) * DEG2RAD_F;
+        float q_max = ((float)sys_cfg->angle_max[i] * 0.01f) * DEG2RAD_F;
+        if (q_min > q_max) {
+            float tmp = q_min;
+            q_min = q_max;
+            q_max = tmp;
+        }
+        if (q_target[i] < q_min) {
+            q_target[i] = q_min;
+        } else if (q_target[i] > q_max) {
+            q_target[i] = q_max;
+        }
+    }
     
     /* 保存目标值 */
     memcpy(ctrl->last_q_target, q_target, 4 * sizeof(float));

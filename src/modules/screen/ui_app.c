@@ -181,6 +181,8 @@ void ui_update_status(void) {
 /* 样式定义                                                                   */
 /* -------------------------------------------------------------------------- */
 
+static lv_timer_t * g_frame_feedback_timers[TEACH_FRAMES_PER_GROUP];
+
 /**
  * @brief 清理 UI 全局指针（切页时调用，防止悬空引用和定时器泄漏）
  */
@@ -193,6 +195,12 @@ static void cleanup_ui_pointers(void) {
     if (g_teach_record_angle_timer) {
         lv_timer_del(g_teach_record_angle_timer);
         g_teach_record_angle_timer = NULL;
+    }
+    for (int i = 0; i < TEACH_FRAMES_PER_GROUP; i++) {
+        if (g_frame_feedback_timers[i]) {
+            lv_timer_del(g_frame_feedback_timers[i]);
+            g_frame_feedback_timers[i] = NULL;
+        }
     }
     
     /* 清理 UI 指针 */
@@ -215,6 +223,9 @@ typedef struct {
     uint8_t frame_idx;
     lv_obj_t * btn;
 } frame_feedback_ctx_t;
+
+static frame_feedback_ctx_t g_frame_feedback_ctx[TEACH_FRAMES_PER_GROUP];
+static lv_timer_t * g_frame_feedback_timers[TEACH_FRAMES_PER_GROUP] = {NULL};
 
 /**
  * @brief 初始化 UI 样式
@@ -373,6 +384,7 @@ static void create_touch_page(void) {
     /* === 队列显示 (左侧, 宽度220, 高度2行约40) === */
     label_queue_info = lv_label_create(lv_scr_act());
     update_queue_display_string();
+    lv_label_set_text(label_queue_info, g_sys_status.queue_list);
     lv_obj_set_width(label_queue_info, 220);
     lv_obj_set_height(label_queue_info, 40);
     lv_obj_set_style_text_color(label_queue_info, COL_TEXT_MAIN, 0);
@@ -459,6 +471,7 @@ static void create_voice_page(void) {
     /* === 队列显示 (左侧, 宽度220, 高度2行约40) === */
     label_queue_info = lv_label_create(lv_scr_act());
     update_queue_display_string();
+    lv_label_set_text(label_queue_info, g_sys_status.queue_list);
     lv_obj_set_width(label_queue_info, 220);
     lv_obj_set_height(label_queue_info, 40);
     lv_obj_set_style_text_color(label_queue_info, COL_TEXT_MAIN, 0);
@@ -537,11 +550,58 @@ static void create_debug_page(void) {
     R_BSP_IrqEnable(g_uart_wifi_cfg.tei_irq);
     R_BSP_IrqEnable(g_uart_wifi_cfg.eri_irq);
 
-    lv_obj_t * lbl = lv_label_create(lv_scr_act());
-    lv_label_set_text(lbl, "DEBUG MODE\n(Not Implemented)");
-    lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_text_color(lbl, COL_TEXT_MAIN, 0);
-    lv_obj_center(lbl);
+    lv_obj_t * title = lv_label_create(lv_scr_act());
+    lv_label_set_text(title, "WIFI DEBUG MODE");
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(title, COL_TEXT_MAIN, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 45);
+
+    /* === 状态显示框（自适应，避免与底部按钮重叠）=== */
+    lv_coord_t box_w = (LV_HOR_RES > 300) ? 280 : (LV_HOR_RES - 20);
+    lv_coord_t box_h = (LV_VER_RES >= 420) ? 130 : 110;
+    lv_coord_t box_y = 80;
+    lv_coord_t bottom_safe_top = LV_VER_RES - 85; /* 预留底部按钮区域 */
+    if (box_y + box_h > bottom_safe_top) {
+        box_y = bottom_safe_top - box_h;
+        if (box_y < 70) {
+            box_y = 70;
+        }
+    }
+
+    lv_obj_t * box = lv_obj_create(lv_scr_act());
+    lv_obj_set_size(box, box_w, box_h);
+    lv_obj_align(box, LV_ALIGN_TOP_MID, 0, box_y);
+    lv_obj_set_style_bg_color(box, COL_GRAY_LIGHT, 0);
+    lv_obj_set_style_border_color(box, COL_BORDER, 0);
+    lv_obj_set_style_border_width(box, 2, 0);
+    lv_obj_set_style_pad_left(box, 8, 0);
+    lv_obj_set_style_pad_right(box, 8, 0);
+    lv_obj_set_style_pad_top(box, 8, 0);
+    lv_obj_set_style_pad_bottom(box, 8, 0);
+    lv_obj_set_style_pad_row(box, 6, 0);
+    lv_obj_set_flex_flow(box, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(box, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
+
+    /* WIFI 图标 */
+    lv_obj_t * icon = lv_label_create(box);
+    lv_label_set_text(icon, LV_SYMBOL_WIFI);
+    lv_obj_set_style_text_font(icon, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_color(icon, COL_BLUE, 0);
+
+    /* 主提示 */
+    lv_obj_t * lbl_main = lv_label_create(box);
+    lv_label_set_text(lbl_main, "Link Active");
+    lv_obj_set_style_text_font(lbl_main, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(lbl_main, COL_TEXT_MAIN, 0);
+
+    /* 副提示 */
+    lv_obj_t * lbl_sub = lv_label_create(box);
+    lv_label_set_text(lbl_sub, "Please operate via mobile APP.\nNo local inputs required.");
+    lv_obj_set_width(lbl_sub, lv_pct(100));
+    lv_obj_set_style_text_align(lbl_sub, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_font(lbl_sub, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(lbl_sub, COL_GRAY_DARK, 0);
 
     /* === BACK 按钮 === */
     lv_obj_t * btn_back = lv_btn_create(lv_scr_act());
@@ -1109,6 +1169,12 @@ static void create_teach_record_frames_page(uint8_t group_idx) {
         lv_timer_del(g_teach_record_angle_timer);
         g_teach_record_angle_timer = NULL;
     }
+    for (int i = 0; i < TEACH_FRAMES_PER_GROUP; i++) {
+        if (g_frame_feedback_timers[i]) {
+            lv_timer_del(g_frame_feedback_timers[i]);
+            g_frame_feedback_timers[i] = NULL;
+        }
+    }
 
     char title[32];
     snprintf(title, sizeof(title), "GROUP %d", group_idx + 1);
@@ -1331,10 +1397,13 @@ static void event_teach_frame_record_cb(lv_event_t * e) {
             }
             
             /* 2秒后恢复蓝色原样 */
-            static frame_feedback_ctx_t feedback_ctx;
-            feedback_ctx.frame_idx = ctx->frame_idx;
-            feedback_ctx.btn = btn;
-            lv_timer_create(frame_feedback_timer_cb, 2000, (void*)&feedback_ctx);
+            if (g_frame_feedback_timers[ctx->frame_idx]) {
+                lv_timer_del(g_frame_feedback_timers[ctx->frame_idx]);
+                g_frame_feedback_timers[ctx->frame_idx] = NULL;
+            }
+            g_frame_feedback_ctx[ctx->frame_idx].frame_idx = ctx->frame_idx;
+            g_frame_feedback_ctx[ctx->frame_idx].btn = btn;
+            g_frame_feedback_timers[ctx->frame_idx] = lv_timer_create(frame_feedback_timer_cb, 2000, (void*)&g_frame_feedback_ctx[ctx->frame_idx]);
         }
     }
 }
@@ -1399,6 +1468,9 @@ static void frame_feedback_timer_cb(lv_timer_t * timer) {
             lv_label_set_text(lbl, buf);
         }
     }
+    if (ctx && ctx->frame_idx < TEACH_FRAMES_PER_GROUP) {
+        g_frame_feedback_timers[ctx->frame_idx] = NULL;
+    }
     lv_timer_del(timer);
 }
 
@@ -1434,10 +1506,13 @@ static void event_teach_frame_last_action_select_cb(lv_event_t * e) {
             }
             
             /* 2秒后恢复蓝色原样 */
-            static frame_feedback_ctx_t feedback_ctx;
-            feedback_ctx.frame_idx = ctx->frame_idx;
-            feedback_ctx.btn = btn;
-            lv_timer_create(frame_feedback_timer_cb, 2000, (void*)&feedback_ctx);
+            if (g_frame_feedback_timers[ctx->frame_idx]) {
+                lv_timer_del(g_frame_feedback_timers[ctx->frame_idx]);
+                g_frame_feedback_timers[ctx->frame_idx] = NULL;
+            }
+            g_frame_feedback_ctx[ctx->frame_idx].frame_idx = ctx->frame_idx;
+            g_frame_feedback_ctx[ctx->frame_idx].btn = btn;
+            g_frame_feedback_timers[ctx->frame_idx] = lv_timer_create(frame_feedback_timer_cb, 2000, (void*)&g_frame_feedback_ctx[ctx->frame_idx]);
         }
     }
 
