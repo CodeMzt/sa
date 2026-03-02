@@ -14,8 +14,13 @@
 
 #include "drv_canfd.h"
 #include "robstride_motor.h"
+#include "shared_data.h"
+#include "sys_log.h"
 
-uint16_t count_can;
+volatile uint16_t count_can;
+
+#define CAN_LINK_CHECK_WINDOW_MS     (200U)
+#define CAN_LINK_MISS_THRESHOLD      (5U)
 
 /* ============================================================
  *  AFL 接收过滤器配置
@@ -89,5 +94,45 @@ fsp_err_t canfd0_send_ext_frame(can_frame_t tx_frame) {
  * @return 链接状态（CANFD_LINK_OK/CANFD_LINK_ERROR）
  */
 void canfd_link_check(void) {
-    
+    static uint16_t s_last_count = 0U;
+    static TickType_t s_last_check_tick = 0;
+    static uint8_t s_miss_windows = 0U;
+
+    TickType_t now = xTaskGetTickCount();
+    if (s_last_check_tick == 0) {
+        s_last_check_tick = now;
+        s_last_count = count_can;
+        g_sys_status.is_can_connected = false;
+        return;
+    }
+
+    if ((now - s_last_check_tick) < pdMS_TO_TICKS(CAN_LINK_CHECK_WINDOW_MS)) {
+        return;
+    }
+
+    uint16_t current_count = count_can;
+    uint16_t rx_delta = (uint16_t)(current_count - s_last_count);
+
+    s_last_count = current_count;
+    s_last_check_tick = now;
+
+    bool previous = g_sys_status.is_can_connected;
+    if (rx_delta > 0U) {
+        s_miss_windows = 0U;
+        g_sys_status.is_can_connected = true;
+    } else {
+        if (s_miss_windows < UINT8_MAX) {
+            s_miss_windows++;
+        }
+        if (s_miss_windows >= CAN_LINK_MISS_THRESHOLD) {
+            g_sys_status.is_can_connected = false;
+        }
+    }
+
+    if (g_sys_status.is_can_connected != previous) {
+        LOG_I("CAN link %s (rx_delta=%u, total=%u)",
+              g_sys_status.is_can_connected ? "UP" : "DOWN",
+              (unsigned int)rx_delta,
+              (unsigned int)current_count);
+    }
 }

@@ -33,6 +33,8 @@ void user_on_estop_reset(void); /* 新增：急停复位回调 */
 void user_on_instrument_selected(const char* instrument_name);
 
 /* 示教模式回调 */
+void user_on_teach_enter(void);
+void user_on_teach_exit(void);
 void user_on_teach_save_frame(uint8_t group_idx, uint8_t frame_idx, uint16_t duration_ms, uint8_t action_type);
 
 #ifdef __cplusplus

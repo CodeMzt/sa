@@ -24,6 +24,8 @@
 #define TEACH_MODE_LOOP_PERIOD_MS    10.0f   /* 示教模式控制周期 10ms */
 #define PLAYBACK_MODE_LOOP_FREQ_HZ   100.0f  /* 回放模式控制频率 100Hz */
 #define PLAYBACK_MODE_LOOP_PERIOD_MS 10.0f    /* 回放模式控制周期 10ms */
+#define IDLE_MODE_LOOP_FREQ_HZ       100.0f   /* IDLE保持控制频率 100Hz */
+#define IDLE_MODE_LOOP_PERIOD_MS     10.0f    /* IDLE保持控制周期 10ms */
 
 /* 运行状态枚举 */
 typedef enum {
@@ -48,6 +50,12 @@ typedef struct {
         float kp[4];            /* 位置刚度（可配，不同关节可不同） */
         float kd[4];            /* 阻尼系数 */
     } playback;
+
+    /* IDLE保持模式参数 */
+    struct {
+        float kp[4];            /* 保持模式位置刚度（高） */
+        float kd[4];            /* 保持模式阻尼（高） */
+    } idle;
     
     /* 重力补偿参数 */
     grav_param_t grav_params;   /* 重力补偿参数 */
@@ -71,10 +79,12 @@ typedef struct {
     /* 控制输出 */
     float last_q_target[4];     /* 上次目标位置 */
     float last_v_target[4];     /* 上次目标速度 */
+    float idle_q_hold[4];       /* IDLE保持目标位置 */
     
     /* 状态标志 */
     bool is_initialized;        /* 是否已初始化 */
     bool emergency_stop;        /* 急停标志 */
+    bool idle_hold_valid;       /* IDLE保持目标是否已锁定 */
 } motion_controller_t;
 
 /* 全局控制器实例 */
@@ -115,7 +125,7 @@ bool motion_ctrl_start_playback(motion_controller_t *ctrl, const action_sequence
 /**
  * @brief 停止当前运行模式
  * @param ctrl 控制器实例指针
- * @note 停止所有关节的控制，切换到空闲状态
+ * @note 软停：仅停止运控状态机并切换到空闲，不下发电机STOP
  */
 void motion_ctrl_stop(motion_controller_t *ctrl);
 
@@ -180,6 +190,8 @@ static inline float get_current_mode_period_ms(motion_state_t state) {
             return TEACH_MODE_LOOP_PERIOD_MS;
         case MOTION_STATE_PLAYBACK:
             return PLAYBACK_MODE_LOOP_PERIOD_MS;
+        case MOTION_STATE_IDLE:
+            return IDLE_MODE_LOOP_PERIOD_MS;
         default:
             return PLAYBACK_MODE_LOOP_PERIOD_MS;  /* 默认使用回放模式频率 */
     }

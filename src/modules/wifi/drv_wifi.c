@@ -19,7 +19,20 @@
 /* ---- 常量 ---- */
 #define RX_BUF_SIZE    4096
 #define TX_BUF_SIZE    8192
-#define CHUNK_MAX      500      /**< W800 单次 SKSND 上限 512B，留余量 */
+#define CHUNK_MAX      256      /**< 大包分块发送时更稳妥的 SKSND 尺寸 */
+
+#define WIFI_AP_IP0       192U
+#define WIFI_AP_IP1       168U
+#define WIFI_AP_IP2       10U
+#define WIFI_AP_IP3       1U
+#define WIFI_AP_NETMASK0  255U
+#define WIFI_AP_NETMASK1  255U
+#define WIFI_AP_NETMASK2  255U
+#define WIFI_AP_NETMASK3  0U
+#define WIFI_AP_GW0       192U
+#define WIFI_AP_GW1       168U
+#define WIFI_AP_GW2       10U
+#define WIFI_AP_GW3       1U
 
 /* ---- 静态缓冲 ---- */
 static volatile char     rx_buf[RX_BUF_SIZE];
@@ -31,6 +44,7 @@ static volatile bool     tx_done = true;
 static char  tx_buf[TX_BUF_SIZE];
 static char  line[RX_BUF_SIZE];             /**< static 避免爆栈 */
 static int   active_sock = -1;
+static bool  wifi_service_started = false;
 
 /* ---- 前置声明 ---- */
 static bool        send_at(const char *cmd, const char *expect, uint32_t ms);
@@ -48,6 +62,7 @@ static bool        parse_decimal_u16(const char *js, const char *key, uint16_t *
 static bool        parse_decimal_i16_array(const char *js, const char *key, int16_t *arr, size_t n);
 static bool        parse_decimal_u16_array(const char *js, const char *key, uint16_t *arr, size_t n);
 static void        encode_hex(const uint8_t *data, uint32_t len, char *hex, size_t max);
+static bool        decode_hex(const char *hex, uint8_t *out, uint32_t out_len);
 
 /* ===========================================================
  *  底层
@@ -118,6 +133,70 @@ static bool send_at(const char *cmd, const char *expect, uint32_t ms) {
 
 bool wifi_link_check(void) { return send_at("AT+\r\n", "+OK", 500); }
 
+bool wifi_start_service(void) {
+    if (wifi_service_started) {
+        return true;
+    }
+
+    if (!wifi_init_ap_server()) {
+        return false;
+    }
+
+    R_BSP_IrqEnable(g_uart_wifi_cfg.rxi_irq);
+    R_BSP_IrqEnable(g_uart_wifi_cfg.txi_irq);
+    R_BSP_IrqEnable(g_uart_wifi_cfg.tei_irq);
+    R_BSP_IrqEnable(g_uart_wifi_cfg.eri_irq);
+
+    wifi_reset_debug_session();
+    wifi_service_started = true;
+    return true;
+}
+
+bool wifi_stop_service(void) {
+    bool ok = true;
+
+    if (wifi_service_started) {
+        (void)send_at("AT+SKCLS=0\r\n", NULL, 0);
+        vTaskDelay(pdMS_TO_TICKS(30));
+        ok &= send_at("AT+SKRPTM=0\r\n", "+OK", 1000);
+        (void)send_at("AT+WLEAV\r\n", NULL, 0);
+        vTaskDelay(pdMS_TO_TICKS(30));
+        (void)g_uart_wifi.p_api->close(g_uart_wifi.p_ctrl);
+    }
+
+    R_BSP_IrqDisable(g_uart_wifi_cfg.rxi_irq);
+    R_BSP_IrqDisable(g_uart_wifi_cfg.txi_irq);
+    R_BSP_IrqDisable(g_uart_wifi_cfg.tei_irq);
+    R_BSP_IrqDisable(g_uart_wifi_cfg.eri_irq);
+
+    rx_idx = 0;
+    rx_buf[0] = '\0';
+    rx_state = 0;
+    active_sock = -1;
+    wifi_service_started = false;
+    return ok;
+}
+
+void wifi_reset_debug_session(void) {
+    const sys_config_t *cfg = nvm_get_sys_config();
+    uint16_t debug_port = (cfg->debug_port != 0U) ? cfg->debug_port : 8080U;
+    char cmd_skct[96];
+
+    /* 仅重建监听服务，避免误关所有 socket 导致 Connection refused */
+    (void)send_at("AT+SKCLS=0\r\n", NULL, 0);
+    vTaskDelay(pdMS_TO_TICKS(30));
+    (void)send_at("AT+SKRPTM=1\r\n", "+OK", 1000);
+    snprintf(cmd_skct, sizeof(cmd_skct), "AT+SKCT=0,1,0,%u,%u\r\n", debug_port, debug_port);
+    (void)send_at(cmd_skct, "+OK", 2000);
+
+    R_BSP_IrqDisable(g_uart_wifi_cfg.rxi_irq);
+    rx_idx = 0;
+    rx_buf[0] = '\0';
+    rx_state = 0;
+    active_sock = -1;
+    R_BSP_IrqEnable(g_uart_wifi_cfg.rxi_irq);
+}
+
 /**
  * @brief 初始化 W800 SoftAP + TCP Server (port 8080)
  * @return 初始化成功返回 true，否则返回 false
@@ -136,14 +215,21 @@ uint8_t wifi_init_ap_server(void) {
     snprintf(cmd_apkey, sizeof(cmd_apkey), "AT+APKEY=1,0,%s\r\n", psk);
     snprintf(cmd_apnip, sizeof(cmd_apnip),
              "AT+APNIP=1,%u.%u.%u.%u,%u.%u.%u.%u,%u.%u.%u.%u,%u.%u.%u.%u\r\n",
-             cfg->ip_addr[0], cfg->ip_addr[1], cfg->ip_addr[2], cfg->ip_addr[3],
-             cfg->netmask[0], cfg->netmask[1], cfg->netmask[2], cfg->netmask[3],
-             cfg->gateway[0], cfg->gateway[1], cfg->gateway[2], cfg->gateway[3],
-             cfg->gateway[0], cfg->gateway[1], cfg->gateway[2], cfg->gateway[3]);
+             WIFI_AP_IP0, WIFI_AP_IP1, WIFI_AP_IP2, WIFI_AP_IP3,
+             WIFI_AP_NETMASK0, WIFI_AP_NETMASK1, WIFI_AP_NETMASK2, WIFI_AP_NETMASK3,
+             WIFI_AP_GW0, WIFI_AP_GW1, WIFI_AP_GW2, WIFI_AP_GW3,
+             WIFI_AP_GW0, WIFI_AP_GW1, WIFI_AP_GW2, WIFI_AP_GW3);
     snprintf(cmd_skct, sizeof(cmd_skct), "AT+SKCT=0,1,0,%u,%u\r\n", debug_port, debug_port);
 
-    if (g_uart_wifi.p_api->open(g_uart_wifi.p_ctrl, g_uart_wifi.p_cfg) != FSP_SUCCESS)
-        return false;
+    fsp_err_t open_err = g_uart_wifi.p_api->open(g_uart_wifi.p_ctrl, g_uart_wifi.p_cfg);
+    if (open_err != FSP_SUCCESS) {
+        (void)g_uart_wifi.p_api->close(g_uart_wifi.p_ctrl);
+        vTaskDelay(pdMS_TO_TICKS(10));
+        open_err = g_uart_wifi.p_api->open(g_uart_wifi.p_ctrl, g_uart_wifi.p_cfg);
+        if (open_err != FSP_SUCCESS) {
+            return false;
+        }
+    }
     LOG_D("WIFI UART opened.");
 
     for (uint8_t n = 10; n; n--)
@@ -163,6 +249,9 @@ uint8_t wifi_init_ap_server(void) {
     ok &= send_at("AT+SKRPTM=1\r\n",        "+OK", 1000);
     ok &= send_at(cmd_skct, "+OK", 2000);
     clear_rx();
+    if (!ok) {
+        (void)g_uart_wifi.p_api->close(g_uart_wifi.p_ctrl);
+    }
     return ok;
 }
 
@@ -340,6 +429,33 @@ static void handle_json(const char *js) {
         return;
     }
 
+    if (match_cmd(js, "write_motion_cfg")) {
+        char hex_tmp[sizeof(motion_config_t) * 2 + 1];
+        motion_config_t cfg;
+
+        if (parse_str(js, "hex", hex_tmp, sizeof(hex_tmp)) == NULL) {
+            send_error("write_motion_cfg", "missing_hex");
+            return;
+        }
+
+        if (!decode_hex(hex_tmp, (uint8_t *)&cfg, sizeof(cfg))) {
+            send_error("write_motion_cfg", "invalid_hex");
+            return;
+        }
+
+        for (uint32_t i = 0; i < TOTAL_ACTION_GROUPS; i++) {
+            if (cfg.groups[i].frame_count > MAX_FRAMES_PER_SEQ) {
+                send_error("write_motion_cfg", "invalid_frame_count");
+                return;
+            }
+        }
+
+        send_json(nvm_save_motion_config(&cfg) == FSP_SUCCESS
+            ? "{\"type\":\"ack\",\"cmd\":\"write_motion_cfg\",\"ok\":true}"
+            : "{\"type\":\"error\",\"cmd\":\"write_motion_cfg\",\"msg\":\"save_failed\"}");
+        return;
+    }
+
     send_error("unknown", "unsupported_cmd");
 }
 
@@ -367,16 +483,35 @@ static void send_json(const char *json_str) {
 
         char at[64];
         snprintf(at, sizeof(at), "AT+SKSND=%d,%u\r\n", active_sock, (unsigned)chunk);
-        wait_tx(200); clear_rx(); tx_done = false;
-        g_uart_wifi.p_api->write(g_uart_wifi.p_ctrl, (uint8_t *)at, strlen(at));
+        bool cmd_ready = false;
+        for (uint32_t attempt = 0; attempt < 3U; attempt++) {
+            wait_tx(200);
+            clear_rx();
+            tx_done = false;
+            g_uart_wifi.p_api->write(g_uart_wifi.p_ctrl, (uint8_t *)at, strlen(at));
 
-        uint32_t w = 0;
-        while (w < 2000 && !strstr((const char *)rx_buf, "+OK")) { vTaskDelay(pdMS_TO_TICKS(5)); w += 5; }
-        if (w >= 2000) { LOG_W("SKSND +OK timeout @%u", (unsigned)sent); return; }
+            uint32_t w = 0;
+            while (w < 2000 && !strstr((const char *)rx_buf, "+OK")) {
+                vTaskDelay(pdMS_TO_TICKS(5));
+                w += 5;
+            }
+
+            if (strstr((const char *)rx_buf, "+OK")) {
+                cmd_ready = true;
+                break;
+            }
+
+            vTaskDelay(pdMS_TO_TICKS(20));
+        }
+        if (!cmd_ready) {
+            LOG_W("SKSND +OK timeout @%u, rx=%.120s", (unsigned)sent, (const char *)rx_buf);
+            return;
+        }
 
         wait_tx(200); clear_rx(); tx_done = false;
         g_uart_wifi.p_api->write(g_uart_wifi.p_ctrl, (uint8_t *)(send_buf + sent), chunk);
         wait_tx(500);
+        vTaskDelay(pdMS_TO_TICKS(25));
         sent += chunk;
     }
 }
@@ -680,4 +815,39 @@ static void encode_hex(const uint8_t *data, uint32_t len, char *hex, size_t max)
         hex[j++] = tbl[data[i] & 0x0F];
     }
     hex[j] = '\0';
+}
+
+/**
+ * @brief 大写/小写十六进制字符串 → 二进制
+ * @param hex     输入十六进制字符串
+ * @param out     输出缓冲区
+ * @param out_len 期望输出长度
+ * @return true 表示转换成功
+ */
+static bool decode_hex(const char *hex, uint8_t *out, uint32_t out_len) {
+    if (!hex || !out) return false;
+
+    size_t hex_len = strlen(hex);
+    if (hex_len != (size_t)out_len * 2U) return false;
+
+    for (uint32_t i = 0; i < out_len; i++) {
+        char c0 = hex[i * 2U];
+        char c1 = hex[i * 2U + 1U];
+        int hi = 0;
+        int lo = 0;
+
+        if (c0 >= '0' && c0 <= '9') hi = c0 - '0';
+        else if (c0 >= 'a' && c0 <= 'f') hi = c0 - 'a' + 10;
+        else if (c0 >= 'A' && c0 <= 'F') hi = c0 - 'A' + 10;
+        else return false;
+
+        if (c1 >= '0' && c1 <= '9') lo = c1 - '0';
+        else if (c1 >= 'a' && c1 <= 'f') lo = c1 - 'a' + 10;
+        else if (c1 >= 'A' && c1 <= 'F') lo = c1 - 'A' + 10;
+        else return false;
+
+        out[i] = (uint8_t)((hi << 4) | lo);
+    }
+
+    return true;
 }

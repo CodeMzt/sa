@@ -904,10 +904,10 @@
       <property id="config.driver.canfd.commonfifo.1.mode" value="config.driver.canfd.commonfifo.1.mode.tx"/>
       <property id="config.driver.canfd.commonfifo.1.rxi_enable" value="config.driver.canfd.commonfifo.1.rxi_enable.disabled"/>
       <property id="config.driver.canfd.commonfifo.1.txi_enable" value="config.driver.canfd.commonfifo.1.txi_enable.enabled"/>
-      <property id="config.driver.canfd.commonfifo.1.int_mode" value="config.driver.canfd.commonfifo.1.int_mode.every_frame"/>
-      <property id="config.driver.canfd.commonfifo.1.int_threshold" value="enum.driver.canfd.fifo.int_threshold.1_2"/>
+      <property id="config.driver.canfd.commonfifo.1.int_mode" value="config.driver.canfd.commonfifo.1.int_mode.threshold"/>
+      <property id="config.driver.canfd.commonfifo.1.int_threshold" value="enum.driver.canfd.fifo.int_threshold.1_4"/>
       <property id="config.driver.canfd.commonfifo.1.payload" value="enum.driver.canfd.fifo.payload.48"/>
-      <property id="config.driver.canfd.commonfifo.1.depth" value="enum.driver.canfd.fifo.depth.8"/>
+      <property id="config.driver.canfd.commonfifo.1.depth" value="enum.driver.canfd.fifo.depth.16"/>
       <property id="config.driver.canfd.commonfifo.1.txmb" value="module.driver.canfd.cfifo.tx_mb.32"/>
       <property id="config.driver.canfd.commonfifo.1.txdelay" value="0"/>
       <property id="config.driver.canfd.commonfifo.1.interval_source" value="config.driver.canfd.commonfifo.1.interval_source.refclk"/>

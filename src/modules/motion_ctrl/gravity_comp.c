@@ -9,12 +9,12 @@
 #include <math.h>
 
 /* 默认参数（适用于典型机械臂） */
-static const float DEFAULT_SIN2_COEFF = 0.8f;   /* sin(q2) 项系数 */
-static const float DEFAULT_COS2_COEFF = 0.1f;   /* cos(q2) 项系数 */
-static const float DEFAULT_SIN23_COEFF = 0.6f;  /* sin(q2+q3) 项系数 */
-static const float DEFAULT_COS23_COEFF = 0.05f; /* cos(q2+q3) 项系数 */
-static const float DEFAULT_SIN234_COEFF = 0.3f; /* sin(q2+q3+q4) 项系数 */
-static const float DEFAULT_COS234_COEFF = 0.02f;/* cos(q2+q3+q4) 项系数 */
+static const float DEFAULT_SIN2_COEFF = 0.0f;   /* sin(q2) 项系数 */
+static const float DEFAULT_COS2_COEFF = 0.0f;   /* cos(q2) 项系数 */
+static const float DEFAULT_SIN23_COEFF = 0.0f;  /* sin(q2+q3) 项系数 */
+static const float DEFAULT_COS23_COEFF = 0.00f; /* cos(q2+q3) 项系数 */
+static const float DEFAULT_SIN234_COEFF = 0.0f; /* sin(q2+q3+q4) 项系数 */
+static const float DEFAULT_COS234_COEFF = 0.00f;/* cos(q2+q3+q4) 项系数 */
 
 void grav_init_default(grav_param_t *gp) {
     if (gp == NULL) {

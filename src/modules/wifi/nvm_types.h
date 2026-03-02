@@ -22,10 +22,10 @@ typedef enum {
 
 /** @brief 单个关键帧 */
 typedef struct __attribute__((packed)) {
-    float    angle_m1;      /**< 关节1角度 */
-    float    angle_m2;      /**< 关节2角度 */
-    float    angle_m3;      /**< 关节3角度 */
-    float    angle_m4;      /**< 关节4角度 */
+    float    angle_m1;      /**< 关节1角度（度） */
+    float    angle_m2;      /**< 关节2角度（度） */
+    float    angle_m3;      /**< 关节3角度（度） */
+    float    angle_m4;      /**< 关节4角度（度） */
     uint16_t duration_ms;   /**< 运动耗时 ms */
     uint8_t  action;        /**< action_type_t */
 } motion_frame_t;

@@ -14,6 +14,7 @@ volatile system_status_t g_sys_status = {
     .is_can_connected = false,
     .is_mic_connected = false,
     .is_wifi_connected = false,
+    .is_debug_mode_active = false,
     .is_running = false,
     .is_voice_command_running = false,
     .is_emergency_stop = false,

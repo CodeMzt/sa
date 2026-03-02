@@ -405,10 +405,10 @@ FSP Configuration
     Common FIFOs: FIFO 1: Mode: Transmit
     Common FIFOs: FIFO 1: RX Interrupt Enable: Disabled
     Common FIFOs: FIFO 1: TX Interrupt Enable: Enabled
-    Common FIFOs: FIFO 1: Interrupt Mode: Every frame
-    Common FIFOs: FIFO 1: Interrupt Threshold: 1/2 full
+    Common FIFOs: FIFO 1: Interrupt Mode: Threshold
+    Common FIFOs: FIFO 1: Interrupt Threshold: 1/4 full
     Common FIFOs: FIFO 1: Payload Size: 48 bytes
-    Common FIFOs: FIFO 1: Depth: 8 stages
+    Common FIFOs: FIFO 1: Depth: 16 stages
     Common FIFOs: FIFO 1: TX Message Buffer: TX Message Buffer 32
     Common FIFOs: FIFO 1: Interval TX Delay: 0
     Common FIFOs: FIFO 1: Interval Timer: Reference clock

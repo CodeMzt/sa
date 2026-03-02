@@ -39,28 +39,32 @@ bool traj_init_from_sequence(traj_controller_t *traj, const action_sequence_t *s
     /* 重置控制器 */
     traj_reset(traj);
     
+    uint8_t point_count = (uint8_t)seq->frame_count;
+    uint8_t segment_count = point_count - 1U;
+
     /* 保存原始帧数据 */
-    traj->frame_count = seq->frame_count; // 注意，这里的帧数包括了当前位置帧
-    memcpy(traj->frames, seq->frames, seq->frame_count * sizeof(motion_frame_t));
-    traj->total_segments = seq->frame_count - 1;
+    traj->frame_count = point_count;
+    traj->total_segments = segment_count;
+    memcpy(traj->frames, seq->frames, point_count * sizeof(motion_frame_t));
     
-    /* 计算总持续时间和时间戳数组 */
+    /* 计算总持续时间和时间戳数组
+     * 约定：frames[i].duration_ms 表示“到达第 i 帧所需时长”（i>=1）
+     */
     float time_points[MAX_FRAMES_PER_SEQ] = {0};
     traj->total_duration = 0.0f;
-    
-    /* 第一帧时间为0，后续累加持续时间 */
-    for (uint8_t i = 0; i < seq->frame_count; i++) {
-        time_points[i] = traj->total_duration;
-        if (i < seq->frame_count - 1) 
-            traj->total_duration += (float)seq->frames[i].duration_ms / 1000.0f; /* ms转秒 */
 
+    /* 第一帧时间为0，后续帧时间由“该帧duration”累加得到 */
+    time_points[0] = 0.0f;
+    for (uint8_t i = 1; i < point_count; i++) {
+        traj->total_duration += (float)seq->frames[i].duration_ms / 1000.0f; /* ms转秒 */
+        time_points[i] = traj->total_duration;
     }
     
     /* 为每个关节计算自然三次样条系数 */
     for (uint8_t joint = 0; joint < TRAJ_MAX_JOINTS; joint++) {
         /* 提取该关节在所有关键帧的角度 */
         float angles[MAX_FRAMES_PER_SEQ];
-        for (uint8_t i = 0; i < seq->frame_count; i++) {
+        for (uint8_t i = 0; i < point_count; i++) {
             switch (joint) {
                 case 0: angles[i] = seq->frames[i].angle_m1; break;
                 case 1: angles[i] = seq->frames[i].angle_m2; break;
@@ -76,29 +80,25 @@ bool traj_init_from_sequence(traj_controller_t *traj, const action_sequence_t *s
         float c[MAX_FRAMES_PER_SEQ] = {0};
         float d[MAX_FRAMES_PER_SEQ] = {0};
         
-        if (!compute_natural_cubic_spline(time_points, angles, seq->frame_count,
+        if (!compute_natural_cubic_spline(time_points, angles, point_count,
                                           a, b, c, d)) {
             traj->state = TRAJ_ERROR;
             return false;
         }
         
         /* 保存每段的系数 */
-        for (uint8_t seg = 0; seg < seq->frame_count - 1; seg++) {
+        for (uint8_t seg = 0; seg < segment_count; seg++) {
             traj->segments[seg][joint].a[0] = a[seg];  /* 常数项 */
             traj->segments[seg][joint].a[1] = b[seg];  /* 一次项系数 */
             traj->segments[seg][joint].a[2] = c[seg];  /* 二次项系数 */
             traj->segments[seg][joint].a[3] = d[seg];  /* 三次项系数 */
             
-            /* 保存段持续时间（从当前关键帧到下一关键帧的时间间隔） */
-            if (seg < seq->frame_count - 1) {
-                float seg_duration = (float)seq->frames[seg].duration_ms / 1000.0f;
-                traj->segments[seg][joint].duration = seg_duration;
-            }
+            /* 保存段持续时间（到达下一关键帧的持续时间） */
+            float seg_duration = (float)seq->frames[seg + 1U].duration_ms / 1000.0f;
+            traj->segments[seg][joint].duration = seg_duration;
 
             /* 保存动作（下一关键帧的动作） */
-            if (seg < seq->frame_count - 1) {
-                traj->segments[seg][joint].action = seq->frames[seg + 1].action;
-            }
+            traj->segments[seg][joint].action = seq->frames[seg + 1U].action;
         }
     }
     
@@ -123,11 +123,12 @@ static bool compute_natural_cubic_spline(const float x[], const float y[], uint8
         return false;
     }
 
-    uint8_t num_segments = n - 1;
+    uint8_t point_count = n;
+    uint8_t segment_count = point_count - 1U;
     
     /* 计算时间间隔 h[i] = x[i+1] - x[i] */
     float h[MAX_FRAMES_PER_SEQ - 1] = {0};
-    for (uint8_t i = 0; i < num_segments; i++) {
+    for (uint8_t i = 0; i < segment_count; i++) {
         h[i] = x[i+1] - x[i];
         if (h[i] <= 0.0f) {
             return false;  /* 时间必须递增 */
@@ -136,7 +137,7 @@ static bool compute_natural_cubic_spline(const float x[], const float y[], uint8
     
     /* 计算alpha数组 */
     float alpha[MAX_FRAMES_PER_SEQ] = {0};
-    for (uint8_t i = 1; i < num_segments; i++) {
+    for (uint8_t i = 1; i < segment_count; i++) {
         alpha[i] = 3.0f/h[i] * (y[i+1] - y[i]) - 3.0f/h[i-1] * (y[i] - y[i-1]);
     }
     
@@ -151,7 +152,7 @@ static bool compute_natural_cubic_spline(const float x[], const float y[], uint8
     z[0] = 0.0f;
     
     /* 前向消元 */
-    for (uint8_t i = 1; i < num_segments; i++) {
+    for (uint8_t i = 1; i < segment_count; i++) {
         l[i] = 2.0f * (x[i+1] - x[i-1]) - h[i-1] * mu[i-1];
         if (fabsf(l[i]) < 1e-6f) {
             return false;  /* 奇异矩阵 */
@@ -161,17 +162,17 @@ static bool compute_natural_cubic_spline(const float x[], const float y[], uint8
     }
     
     /* 自然边界条件：l[n-1] = 1, z[n-1] = 0 */
-    l[num_segments] = 1.0f;
-    z[num_segments] = 0.0f;
+    l[segment_count] = 1.0f;
+    z[segment_count] = 0.0f;
     float c_spline[MAX_FRAMES_PER_SEQ] = {0};
     
     /* 后向代入计算c系数 */
-    for (int8_t i = num_segments - 1; i >= 0; i--) {
+    for (int8_t i = (int8_t)segment_count - 1; i >= 0; i--) {
         c_spline[i] = z[i] - mu[i] * c_spline[i+1];
     }
     
     /* 计算a,b,d系数 */
-    for (uint8_t i = 0; i < num_segments; i++) {
+    for (uint8_t i = 0; i < segment_count; i++) {
         a[i] = y[i];
         b[i] = (y[i+1] - y[i]) / h[i] - h[i] * (c_spline[i+1] + 2.0f * c_spline[i]) / 3.0f;
         c[i] = c_spline[i];

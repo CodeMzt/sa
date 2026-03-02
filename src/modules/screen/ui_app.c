@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include "voice_command.h"
 #include "wifi_debug.h"
+#include "drv_wifi.h"
 #include "nvm_types.h"
 #include "nvm_manager.h"
 
@@ -40,7 +41,8 @@ typedef enum {
     PAGE_TEACH_MAIN,
     PAGE_TEACH_MONITOR,
     PAGE_TEACH_RECORD,
-    PAGE_TEACH_FRAMES
+    PAGE_TEACH_FRAMES,
+    PAGE_TEACH_ZERO
 } ui_page_t;
 
 static ui_page_t g_current_page = PAGE_HOME;
@@ -84,6 +86,9 @@ static lv_style_t style_container; // 浅色容器
 #define COL_GRAY_DARK   lv_color_hex(0x8E8E93)
 #define COL_GRAY_LIGHT  lv_color_hex(0xF2F2F7)
 
+/* 统一反馈恢复时长（毫秒） */
+#define UI_FEEDBACK_RESTORE_MS   (1200U)
+
 /* -------------------------------------------------------------------------- */
 /* Private function prototypes                                                */
 /* -------------------------------------------------------------------------- */
@@ -114,17 +119,21 @@ static void create_teach_monitor_page(void);
 static void teach_monitor_update_cb(lv_timer_t * timer);
 static void event_teach_monitor_back_cb(lv_event_t * e);
 static void create_teach_record_page(void);
+static void create_teach_zero_page(void);
 static void event_teach_group_selected_cb(lv_event_t * e);
 static void create_teach_record_frames_page(uint8_t group_idx);
 static void teach_record_angle_update_cb(lv_timer_t * timer);
 static void event_teach_record_back_cb(lv_event_t * e);
 static void event_teach_frame_record_cb(lv_event_t * e);
 static void event_teach_record_main_back_cb(lv_event_t * e);
+static void event_teach_zero_back_cb(lv_event_t * e);
+static void event_teach_zero_set_cb(lv_event_t * e);
 static void event_teach_frame_duration_minus_cb(lv_event_t * e);
 static void event_teach_frame_duration_plus_cb(lv_event_t * e);
 static void event_teach_frame_last_action_select_cb(lv_event_t * e);
 static void frame_feedback_timer_cb(lv_timer_t * timer);
 static void event_teach_save_config_cb(lv_event_t * e);
+static void zero_feedback_timer_cb(lv_timer_t * timer);
 
 /* -------------------------------------------------------------------------- */
 /* Core Interface Functions                                                   */
@@ -181,7 +190,18 @@ void ui_update_status(void) {
 /* 样式定义                                                                   */
 /* -------------------------------------------------------------------------- */
 
-static lv_timer_t * g_frame_feedback_timers[TEACH_FRAMES_PER_GROUP];
+#define TEACH_ZERO_BUTTON_NUM 5
+
+typedef struct {
+    uint8_t idx;
+    uint8_t motor_id;
+    lv_obj_t * btn;
+    const char * default_text;
+} teach_zero_ctx_t;
+
+static lv_timer_t * g_frame_feedback_timers[TEACH_FRAMES_PER_GROUP] = {NULL};
+static teach_zero_ctx_t g_teach_zero_ctx[TEACH_ZERO_BUTTON_NUM];
+static lv_timer_t * g_zero_feedback_timers[TEACH_ZERO_BUTTON_NUM] = {NULL};
 
 /**
  * @brief 清理 UI 全局指针（切页时调用，防止悬空引用和定时器泄漏）
@@ -201,6 +221,13 @@ static void cleanup_ui_pointers(void) {
             lv_timer_del(g_frame_feedback_timers[i]);
             g_frame_feedback_timers[i] = NULL;
         }
+    }
+    for (int i = 0; i < TEACH_ZERO_BUTTON_NUM; i++) {
+        if (g_zero_feedback_timers[i]) {
+            lv_timer_del(g_zero_feedback_timers[i]);
+            g_zero_feedback_timers[i] = NULL;
+        }
+        g_teach_zero_ctx[i].btn = NULL;
     }
     
     /* 清理 UI 指针 */
@@ -225,7 +252,6 @@ typedef struct {
 } frame_feedback_ctx_t;
 
 static frame_feedback_ctx_t g_frame_feedback_ctx[TEACH_FRAMES_PER_GROUP];
-static lv_timer_t * g_frame_feedback_timers[TEACH_FRAMES_PER_GROUP] = {NULL};
 
 /**
  * @brief 初始化 UI 样式
@@ -545,11 +571,6 @@ static void create_voice_page(void) {
 static void create_debug_page(void) {
     lv_obj_clean(lv_scr_act());
 
-    R_BSP_IrqEnable(g_uart_wifi_cfg.rxi_irq);
-    R_BSP_IrqEnable(g_uart_wifi_cfg.txi_irq);
-    R_BSP_IrqEnable(g_uart_wifi_cfg.tei_irq);
-    R_BSP_IrqEnable(g_uart_wifi_cfg.eri_irq);
-
     lv_obj_t * title = lv_label_create(lv_scr_act());
     lv_label_set_text(title, "WIFI DEBUG MODE");
     lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
@@ -628,6 +649,7 @@ static void create_debug_page(void) {
 static void event_nav_cb(lv_event_t * e) {
     int id = (int)(uintptr_t)lv_event_get_user_data(e);
     label_queue_info = NULL;
+    g_sys_status.is_debug_mode_active = false;
 
     switch(id) {
         case 0: 
@@ -645,10 +667,12 @@ static void event_nav_cb(lv_event_t * e) {
             break;
         case 3: 
             g_current_page = PAGE_DEBUG;
+            g_sys_status.is_debug_mode_active = true;
             create_debug_page(); 
             break;
         case 4: 
             g_current_page = PAGE_TEACH_MAIN;
+            user_on_teach_enter();
             create_teach_page(); 
             break;
     }
@@ -696,6 +720,10 @@ static void event_mbox_cb(lv_event_t * e) {
     const char * btn_txt = lv_msgbox_get_active_btn_text(mbox);
 
     if(btn_txt && strcmp(btn_txt, "YES") == 0) {
+        if (g_current_page == PAGE_TEACH_MAIN) {
+            user_on_teach_exit();
+        }
+
         if (g_sys_status.is_running) {
             g_sys_status.is_running = false;
             user_on_stop();
@@ -706,10 +734,7 @@ static void event_mbox_cb(lv_event_t * e) {
             user_on_voice_stop();
         }
 
-        R_BSP_IrqDisable(g_uart_wifi_cfg.rxi_irq);
-        R_BSP_IrqDisable(g_uart_wifi_cfg.txi_irq);
-        R_BSP_IrqDisable(g_uart_wifi_cfg.tei_irq);
-        R_BSP_IrqDisable(g_uart_wifi_cfg.eri_irq);
+        g_sys_status.is_debug_mode_active = false;
 
         clear_act_queue();
         update_queue_display_string();
@@ -919,7 +944,7 @@ static void create_teach_page(void) {
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 60);
 
     lv_obj_t * cont = lv_obj_create(lv_scr_act());
-    lv_obj_set_size(cont, 260, 180);
+    lv_obj_set_size(cont, 260, 210);
     lv_obj_align(cont, LV_ALIGN_CENTER, 0, 20);
     lv_obj_set_flex_flow(cont, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(cont, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
@@ -942,6 +967,7 @@ static void create_teach_page(void) {
 
     ADD_TEACH_BTN("MONITOR", 1);
     ADD_TEACH_BTN("RECORD", 2);
+    ADD_TEACH_BTN("ZERO", 3);
 
     /* === BACK 按钮 === */
     lv_obj_t * btn_back = lv_btn_create(lv_scr_act());
@@ -971,7 +997,174 @@ static void event_teach_submode_cb(lv_event_t * e) {
             g_current_page = PAGE_TEACH_RECORD;
             create_teach_record_page(); 
             break;
+        case 3:
+            g_current_page = PAGE_TEACH_ZERO;
+            create_teach_zero_page();
+            break;
     }
+}
+
+/**
+ * @brief 创建示教零点标定页面
+ */
+static void create_teach_zero_page(void) {
+    lv_obj_clean(lv_scr_act());
+
+    for (int i = 0; i < TEACH_ZERO_BUTTON_NUM; i++) {
+        if (g_zero_feedback_timers[i]) {
+            lv_timer_del(g_zero_feedback_timers[i]);
+            g_zero_feedback_timers[i] = NULL;
+        }
+    }
+
+    lv_obj_t * title = lv_label_create(lv_scr_act());
+    lv_label_set_text(title, "ZERO CALIB MODE");
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(title, COL_TEXT_MAIN, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 45);
+
+    lv_obj_t * cont = lv_obj_create(lv_scr_act());
+    lv_obj_set_size(cont, 310, 225);
+    lv_obj_align(cont, LV_ALIGN_TOP_MID, 0, 75);
+    lv_obj_set_style_bg_opa(cont, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(cont, 0, 0);
+    lv_obj_set_style_pad_all(cont, 0, 0);
+    lv_obj_clear_flag(cont, LV_OBJ_FLAG_SCROLLABLE);
+
+    static lv_coord_t col_dsc[] = {150, 150, LV_GRID_TEMPLATE_LAST};
+    static lv_coord_t row_dsc[] = {66, 66, 66, LV_GRID_TEMPLATE_LAST};
+    lv_obj_set_layout(cont, LV_LAYOUT_GRID);
+    lv_obj_set_style_grid_column_dsc_array(cont, col_dsc, 0);
+    lv_obj_set_style_grid_row_dsc_array(cont, row_dsc, 0);
+
+    static const uint8_t motor_ids[TEACH_ZERO_BUTTON_NUM] = {
+        ROBSTRIDE_MOTOR_ID_JOINT1,
+        ROBSTRIDE_MOTOR_ID_JOINT2,
+        ROBSTRIDE_MOTOR_ID_JOINT3,
+        ROBSTRIDE_MOTOR_ID_JOINT4,
+        ROBSTRIDE_MOTOR_ID_GRIPPER,
+    };
+
+    static const char * btn_texts[TEACH_ZERO_BUTTON_NUM] = {
+        "J1 ZERO",
+        "J2 ZERO",
+        "J3 ZERO",
+        "J4 ZERO",
+        "GRIPPER ZERO",
+    };
+
+    for (uint8_t i = 0; i < TEACH_ZERO_BUTTON_NUM; i++) {
+        lv_obj_t * btn = lv_btn_create(cont);
+        lv_obj_add_style(btn, &style_btn_std, 0);
+        lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
+
+        int row = i / 2;
+        int col = i % 2;
+        if (i == 4) {
+            lv_obj_set_grid_cell(btn, LV_GRID_ALIGN_CENTER, 0, 2, LV_GRID_ALIGN_STRETCH, 2, 1);
+            lv_obj_set_width(btn, 170);
+        } else {
+            lv_obj_set_grid_cell(btn, LV_GRID_ALIGN_STRETCH, col, 1, LV_GRID_ALIGN_STRETCH, row, 1);
+        }
+
+        lv_obj_t * lbl = lv_label_create(btn);
+        lv_label_set_text(lbl, btn_texts[i]);
+        lv_obj_center(lbl);
+
+        g_teach_zero_ctx[i].idx = i;
+        g_teach_zero_ctx[i].motor_id = motor_ids[i];
+        g_teach_zero_ctx[i].btn = btn;
+        g_teach_zero_ctx[i].default_text = btn_texts[i];
+
+        lv_obj_add_event_cb(btn, event_teach_zero_set_cb, LV_EVENT_CLICKED, (void*)&g_teach_zero_ctx[i]);
+    }
+
+    /* === BACK 按钮（直接返回TEACH主页，不弹确认框） === */
+    lv_obj_t * btn_back = lv_btn_create(lv_scr_act());
+    lv_obj_set_size(btn_back, 80, 60);
+    lv_obj_align(btn_back, LV_ALIGN_BOTTOM_LEFT, 10, -10);
+    lv_obj_add_style(btn_back, &style_btn_std, 0);
+    lv_obj_set_style_bg_color(btn_back, COL_GRAY_DARK, 0);
+    lv_obj_clear_flag(btn_back, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(btn_back, event_teach_zero_back_cb, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t * lbl_back = lv_label_create(btn_back);
+    lv_label_set_text(lbl_back, "BACK");
+    lv_obj_center(lbl_back);
+}
+
+/**
+ * @brief 零点标定页面返回回调
+ */
+static void event_teach_zero_back_cb(lv_event_t * e) {
+    FSP_PARAMETER_NOT_USED(e);
+    for (int i = 0; i < TEACH_ZERO_BUTTON_NUM; i++) {
+        if (g_zero_feedback_timers[i]) {
+            lv_timer_del(g_zero_feedback_timers[i]);
+            g_zero_feedback_timers[i] = NULL;
+        }
+    }
+    g_current_page = PAGE_TEACH_MAIN;
+    create_teach_page();
+}
+
+/**
+ * @brief 零点标定按钮点击回调
+ */
+static void event_teach_zero_set_cb(lv_event_t * e) {
+    teach_zero_ctx_t * ctx = (teach_zero_ctx_t *)lv_event_get_user_data(e);
+    if (!ctx || !ctx->btn || !lv_obj_is_valid(ctx->btn)) {
+        return;
+    }
+
+    fsp_err_t err = robstride_set_zero(ctx->motor_id);
+
+    lv_obj_remove_style(ctx->btn, &style_btn_std, 0);
+    lv_obj_remove_style(ctx->btn, &style_btn_green, 0);
+    lv_obj_remove_style(ctx->btn, &style_btn_red, 0);
+
+    lv_obj_t * lbl = lv_obj_get_child(ctx->btn, 0);
+    if (err == FSP_SUCCESS) {
+        lv_obj_add_style(ctx->btn, &style_btn_green, 0);
+        if (lbl) {
+            lv_label_set_text(lbl, "Zeroed!");
+        }
+    } else {
+        lv_obj_add_style(ctx->btn, &style_btn_red, 0);
+        if (lbl) {
+            lv_label_set_text(lbl, "Failed");
+        }
+    }
+
+    if (ctx->idx < TEACH_ZERO_BUTTON_NUM) {
+        if (g_zero_feedback_timers[ctx->idx]) {
+            lv_timer_del(g_zero_feedback_timers[ctx->idx]);
+            g_zero_feedback_timers[ctx->idx] = NULL;
+        }
+        g_zero_feedback_timers[ctx->idx] = lv_timer_create(zero_feedback_timer_cb, UI_FEEDBACK_RESTORE_MS, (void*)ctx);
+    }
+}
+
+/**
+ * @brief 零点标定反馈恢复定时器回调
+ */
+static void zero_feedback_timer_cb(lv_timer_t * timer) {
+    teach_zero_ctx_t * ctx = (teach_zero_ctx_t *)timer->user_data;
+    if (ctx && ctx->btn && lv_obj_is_valid(ctx->btn)) {
+        lv_obj_remove_style(ctx->btn, &style_btn_green, 0);
+        lv_obj_remove_style(ctx->btn, &style_btn_red, 0);
+        lv_obj_add_style(ctx->btn, &style_btn_std, 0);
+        lv_obj_t * lbl = lv_obj_get_child(ctx->btn, 0);
+        if (lbl && ctx->default_text) {
+            lv_label_set_text(lbl, ctx->default_text);
+        }
+    }
+
+    if (ctx && ctx->idx < TEACH_ZERO_BUTTON_NUM) {
+        g_zero_feedback_timers[ctx->idx] = NULL;
+    }
+
+    lv_timer_del(timer);
 }
 
 /**
@@ -1403,7 +1596,7 @@ static void event_teach_frame_record_cb(lv_event_t * e) {
             }
             g_frame_feedback_ctx[ctx->frame_idx].frame_idx = ctx->frame_idx;
             g_frame_feedback_ctx[ctx->frame_idx].btn = btn;
-            g_frame_feedback_timers[ctx->frame_idx] = lv_timer_create(frame_feedback_timer_cb, 2000, (void*)&g_frame_feedback_ctx[ctx->frame_idx]);
+            g_frame_feedback_timers[ctx->frame_idx] = lv_timer_create(frame_feedback_timer_cb, UI_FEEDBACK_RESTORE_MS, (void*)&g_frame_feedback_ctx[ctx->frame_idx]);
         }
     }
 }
@@ -1512,7 +1705,7 @@ static void event_teach_frame_last_action_select_cb(lv_event_t * e) {
             }
             g_frame_feedback_ctx[ctx->frame_idx].frame_idx = ctx->frame_idx;
             g_frame_feedback_ctx[ctx->frame_idx].btn = btn;
-            g_frame_feedback_timers[ctx->frame_idx] = lv_timer_create(frame_feedback_timer_cb, 2000, (void*)&g_frame_feedback_ctx[ctx->frame_idx]);
+            g_frame_feedback_timers[ctx->frame_idx] = lv_timer_create(frame_feedback_timer_cb, UI_FEEDBACK_RESTORE_MS, (void*)&g_frame_feedback_ctx[ctx->frame_idx]);
         }
     }
 
@@ -1567,7 +1760,7 @@ static void event_teach_save_config_cb(lv_event_t * e) {
             fb_ctx.btn = btn;
             fb_ctx.lbl = lbl;
             
-            lv_timer_create(save_feedback_timer_cb, 1500, &fb_ctx);
+            lv_timer_create(save_feedback_timer_cb, UI_FEEDBACK_RESTORE_MS, &fb_ctx);
         }
     }
 }
@@ -1600,6 +1793,14 @@ __attribute__((weak)) void user_on_estop_reset(void) {
 }
 __attribute__((weak)) void user_on_instrument_selected(const char* name) {
     LOG_D("[UI] Select %s",name);
+}
+
+__attribute__((weak)) void user_on_teach_enter(void) {
+    LOG_D("[UI] TEACH ENTER");
+}
+
+__attribute__((weak)) void user_on_teach_exit(void) {
+    LOG_D("[UI] TEACH EXIT");
 }
 
 __attribute__((weak)) void user_on_teach_save_frame(uint8_t group_idx, uint8_t frame_idx, uint16_t duration_ms, uint8_t action_type) {

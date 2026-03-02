@@ -14,6 +14,7 @@
 /* ---- RAM 缓存 ---- */
 static sys_config_t    g_sys_cfg;
 static motion_config_t g_motion_cfg;
+static volatile uint8_t g_nvm_init_state = 0U; /* 0:未初始化 1:初始化中 2:已完成 */
 
 /* ---- 日志缓冲 ---- */
 #define LOG_CACHE_SIZE  256               /**< 页单位 */
@@ -44,29 +45,60 @@ static uint32_t    get_device_id(void);
  * @return FSP_SUCCESS 表示成功，其他表示错误
  */
 fsp_err_t nvm_init(void) {
+    if (g_nvm_init_state == 2U) {
+        return FSP_SUCCESS;
+    }
+
+    taskENTER_CRITICAL();
+    if (g_nvm_init_state == 0U) {
+        g_nvm_init_state = 1U;
+        taskEXIT_CRITICAL();
+    } else {
+        taskEXIT_CRITICAL();
+        while (g_nvm_init_state == 1U) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+        return (g_nvm_init_state == 2U) ? FSP_SUCCESS : FSP_ERR_INTERNAL;
+    }
+
     fsp_err_t err;
 
     err = g_crc0.p_api->open(g_crc0.p_ctrl, g_crc0.p_cfg);
-    if (err != FSP_SUCCESS) return err;
+    if (err != FSP_SUCCESS) {
+        g_nvm_init_state = 0U;
+        return err;
+    }
 
     err = g_qspi0.p_api->open(g_qspi0.p_ctrl, g_qspi0.p_cfg);
-    if (err != FSP_SUCCESS) return err;
+    if (err != FSP_SUCCESS) {
+        g_nvm_init_state = 0U;
+        return err;
+    }
 
     /* 系统配置 */
     err = qspi_read(NVM_ADDR_SYS_CONFIG, (uint8_t *)&g_sys_cfg, sizeof(sys_config_t));
-    if (err != FSP_SUCCESS) return err;
+    if (err != FSP_SUCCESS) {
+        g_nvm_init_state = 0U;
+        return err;
+    }
 
     uint32_t crc = calc_crc32((uint8_t *)&g_sys_cfg, sizeof(sys_config_t) - 4);
     if (g_sys_cfg.magic_word != NVM_MAGIC_WORD || g_sys_cfg.crc32 != crc) {
         LOG_D("Load default config.");
         load_defaults();
         err = nvm_save_sys_config(&g_sys_cfg);
-        if (err != FSP_SUCCESS) return err;
+        if (err != FSP_SUCCESS) {
+            g_nvm_init_state = 0U;
+            return err;
+        }
     }
 
     /* 动作配置 */
     err = qspi_read(NVM_ADDR_MOTION_SEQ, (uint8_t *)&g_motion_cfg, sizeof(motion_config_t));
-    if (err != FSP_SUCCESS) return err;
+    if (err != FSP_SUCCESS) {
+        g_nvm_init_state = 0U;
+        return err;
+    }
 
     uint32_t motion_crc = calc_crc32((uint8_t *)&g_motion_cfg, sizeof(motion_config_t) - 4);
     if (g_motion_cfg.crc32 != motion_crc) {
@@ -78,6 +110,7 @@ fsp_err_t nvm_init(void) {
     scan_log_head();
     LOG_D("Device ID: 0x%.8x", get_device_id());
 
+    g_nvm_init_state = 2U;
     return FSP_SUCCESS;
 }
 
@@ -240,11 +273,11 @@ static void load_defaults(void) {
     g_sys_cfg.magic_word = NVM_MAGIC_WORD;
     g_sys_cfg.version    = NVM_VERSION;
 
-    uint8_t ip[]  = {192,168,4,1};  memcpy(g_sys_cfg.ip_addr,  ip,  4);
+    uint8_t ip[]  = {192,168,31,250};  memcpy(g_sys_cfg.ip_addr,  ip,  4);
     uint8_t msk[] = {255,255,255,0}; memcpy(g_sys_cfg.netmask, msk, 4);
-    uint8_t gw[]  = {192,168,4,1};  memcpy(g_sys_cfg.gateway,  gw,  4);
-    uint8_t srv[] = {192,168,4,2};  memcpy(g_sys_cfg.server_ip,srv, 4);
-    g_sys_cfg.server_port = 9000;
+    uint8_t gw[]  = {192,168,31,1};  memcpy(g_sys_cfg.gateway,  gw,  4);
+    uint8_t srv[] = {192,168,31,229};  memcpy(g_sys_cfg.server_ip,srv, 4);
+    g_sys_cfg.server_port = 2333;
     g_sys_cfg.debug_port  = 8080;
 
     strncpy(g_sys_cfg.wifi_ssid, "SurgicalArm_Debug", sizeof(g_sys_cfg.wifi_ssid) - 1);

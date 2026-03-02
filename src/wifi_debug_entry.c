@@ -22,24 +22,38 @@ void wifi_debug_entry(void *pvParameters) {
         }
     }
 
-    if (!wifi_init_ap_server()) {
-        LOG_E("WIFI init error.");
-        g_sys_status.is_wifi_connected = false;
-        while (1) {
-            vTaskDelay(pdMS_TO_TICKS(1000));
-        }
-    }
+    g_sys_status.is_wifi_connected = false;
+    g_sys_status.is_debug_mode_active = false;
+    LOG_I("WiFi debug task started (on-demand mode).");
 
-    g_sys_status.is_wifi_connected = true;
-    LOG_I("WiFi debug task started.");
-
-    R_BSP_IrqDisable(g_uart_wifi_cfg.rxi_irq);
-    R_BSP_IrqDisable(g_uart_wifi_cfg.txi_irq);
-    R_BSP_IrqDisable(g_uart_wifi_cfg.tei_irq);
-    R_BSP_IrqDisable(g_uart_wifi_cfg.eri_irq);
+    bool wifi_running = false;
 
     while (1) {
-        wifi_process_commands();
-        vTaskDelay(100);
+        bool should_run = g_sys_status.is_debug_mode_active;
+
+        if (should_run && !wifi_running) {
+            if (wifi_start_service()) {
+                wifi_running = true;
+                g_sys_status.is_wifi_connected = true;
+                LOG_I("WiFi service started for DEBUG mode.");
+            } else {
+                g_sys_status.is_wifi_connected = false;
+                LOG_E("WiFi service start failed.");
+            }
+        } else if (!should_run && wifi_running) {
+            if (!wifi_stop_service()) {
+                LOG_W("WiFi service stop reported warnings.");
+            }
+            wifi_running = false;
+            g_sys_status.is_wifi_connected = false;
+            LOG_I("WiFi service stopped (exit DEBUG mode).");
+        }
+
+        if (wifi_running) {
+            wifi_process_commands();
+            vTaskDelay(pdMS_TO_TICKS(20));
+        } else {
+            vTaskDelay(pdMS_TO_TICKS(100));
+        }
     }
 }

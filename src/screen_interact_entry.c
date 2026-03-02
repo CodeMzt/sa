@@ -8,8 +8,10 @@
 #include "lvgl\lvgl.h"
 #include "nvm_manager.h"
 #include "robstride_motor.h"
+#include "drv_canfd.h"
+#include <math.h>
 
-extern void canfd_link_check(void);
+#define RAD2DEG_F 57.2957795130823208768f
 
 void screen_interact_entry(void *pvParameters) {
     FSP_PARAMETER_NOT_USED(pvParameters);
@@ -42,10 +44,10 @@ void user_on_teach_save_frame(uint8_t group_idx, uint8_t frame_idx, uint16_t dur
     motion_frame_t * frame = &seq->frames[frame_idx];
 
     /* 保存电机位置 */
-    frame->angle_m1    = g_motors[0].feedback.position;
-    frame->angle_m2    = g_motors[1].feedback.position;
-    frame->angle_m3    = g_motors[2].feedback.position;
-    frame->angle_m4    = g_motors[3].feedback.position;
+    frame->angle_m1    = g_motors[0].feedback.position * RAD2DEG_F;
+    frame->angle_m2    = g_motors[1].feedback.position * RAD2DEG_F;
+    frame->angle_m3    = g_motors[2].feedback.position * RAD2DEG_F;
+    frame->angle_m4    = g_motors[3].feedback.position * RAD2DEG_F;
     frame->duration_ms = duration_ms;
     frame->action      = (uint8_t)action_type;
 
@@ -54,7 +56,7 @@ void user_on_teach_save_frame(uint8_t group_idx, uint8_t frame_idx, uint16_t dur
         seq->frame_count = frame_idx + 1;
     }
 
-    LOG_D("[TEACH] Save frame G%d F%d: M1=%.2f, M2=%.2f, M3=%.2f, M4=%.2f, dur=%dms, action=%d",
+    LOG_D("[TEACH] Save frame G%d F%d (deg): M1=%.2f, M2=%.2f, M3=%.2f, M4=%.2f, dur=%dms, action=%d",
           group_idx, frame_idx, 
           frame->angle_m1, frame->angle_m2, frame->angle_m3, frame->angle_m4,
           duration_ms, action_type);

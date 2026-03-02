@@ -24,6 +24,7 @@ typedef struct {
     bool is_can_connected;
     bool is_mic_connected;
     bool is_wifi_connected;
+    bool is_debug_mode_active;
 
     bool is_running;
     bool is_voice_command_running;

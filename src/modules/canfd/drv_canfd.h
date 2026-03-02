@@ -15,7 +15,7 @@
 #include <string.h>
 #include "can_comms.h"
 
-extern uint16_t count_can;
+extern volatile uint16_t count_can;
 
 /**
  * @brief  初始化 CANFD0 外设，切换到正常工作模式
@@ -34,5 +34,10 @@ fsp_err_t canfd0_send_ext_frame(can_frame_t tx_frame);
  * @brief  CAN 接收/发送回调（由 FSP 驱动自动调用，用户勿直接调用）
  */
 void canfd0_callback(can_callback_args_t *p_args);
+
+/**
+ * @brief  基于接收帧活动进行 CAN 链路联通检查
+ */
+void canfd_link_check(void);
 
 #endif /* SURGIDELIVER_ARM_CANFD_H_ */

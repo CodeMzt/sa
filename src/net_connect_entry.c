@@ -32,7 +32,23 @@ void net_connect_entry(void *pvParameters) {
     vTaskDelay(pdMS_TO_TICKS(3000));
     LOG_I("Ethernet connect thread started.");
 
+    fsp_err_t nvm_err = nvm_init();
+    if (nvm_err != FSP_SUCCESS) {
+        LOG_E("NVM init failed in net task: %d", nvm_err);
+        g_sys_status.is_eth_connected = false;
+        while (1) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+        }
+    }
+
     const sys_config_t *cfg = nvm_get_sys_config();
+
+    LOG_I("ETH cfg: ip=%u.%u.%u.%u mask=%u.%u.%u.%u gw=%u.%u.%u.%u server=%u.%u.%u.%u:%u",
+          cfg->ip_addr[0], cfg->ip_addr[1], cfg->ip_addr[2], cfg->ip_addr[3],
+          cfg->netmask[0], cfg->netmask[1], cfg->netmask[2], cfg->netmask[3],
+          cfg->gateway[0], cfg->gateway[1], cfg->gateway[2], cfg->gateway[3],
+          cfg->server_ip[0], cfg->server_ip[1], cfg->server_ip[2], cfg->server_ip[3],
+          cfg->server_port);
 
     if(net_connect_init()!=pdTRUE) {
         LOG_E("Failed to start the Ethernet.");
@@ -46,24 +62,39 @@ void net_connect_entry(void *pvParameters) {
                                                        cfg->server_ip[3]);
 
     while (1) {
-        if(g_ether0.p_cfg->p_ether_phy_instance->p_api->linkStatusGet(g_ether0.p_cfg->p_ether_phy_instance->p_ctrl) == FSP_SUCCESS){
-            LOG_I("Successfully connect to the Ethernet.");
-            g_sys_status.is_eth_connected = true;
-            Socket_t udp_sock = FreeRTOS_socket(FREERTOS_AF_INET, FREERTOS_SOCK_DGRAM, FREERTOS_IPPROTO_UDP);
+        fsp_err_t link_err = g_ether0.p_cfg->p_ether_phy_instance->p_api->linkStatusGet(
+                g_ether0.p_cfg->p_ether_phy_instance->p_ctrl);
+        BaseType_t net_up = FreeRTOS_IsNetworkUp();
 
-            if (udp_sock != FREERTOS_INVALID_SOCKET){
-                LOG_I("Start sending to the server...");
-                while (1){
-                    pack_motor_data(send_buf);
-                    FreeRTOS_sendto(udp_sock, send_buf, PACKET_SIZE, 0, &server_addr, sizeof(server_addr));
-                    vTaskDelay(pdMS_TO_TICKS(50));
-                }
+        if ((link_err == FSP_SUCCESS) && (net_up == pdTRUE)) {
+            g_sys_status.is_eth_connected = true;
+
+            Socket_t udp_sock = FreeRTOS_socket(FREERTOS_AF_INET, FREERTOS_SOCK_DGRAM, FREERTOS_IPPROTO_UDP);
+            if (udp_sock == FREERTOS_INVALID_SOCKET) {
+                LOG_W("UDP socket create failed.");
+                vTaskDelay(pdMS_TO_TICKS(1000));
+                continue;
             }
-            else LOG_W("Failed to connect to the server.");
+
+            LOG_I("Ethernet UP, start UDP send loop.");
+            while (FreeRTOS_IsNetworkUp() == pdTRUE) {
+                pack_motor_data(send_buf);
+                BaseType_t sent = FreeRTOS_sendto(udp_sock, send_buf, PACKET_SIZE, 0, &server_addr, sizeof(server_addr));
+                if (sent < 0) {
+                    LOG_W("UDP send failed: %ld", (long)sent);
+                    break;
+                }
+                vTaskDelay(pdMS_TO_TICKS(50));
+            }
+
             FreeRTOS_closesocket(udp_sock);
+            g_sys_status.is_eth_connected = false;
+            LOG_W("Ethernet down or stack down, UDP loop stopped.");
+        } else {
+            g_sys_status.is_eth_connected = false;
+            LOG_W("Ethernet not ready: link_err=%d net_up=%ld", link_err, (long)net_up);
+            vTaskDelay(pdMS_TO_TICKS(1000));
         }
-        LOG_W("Failed to connect to the Ethernet.");
-        vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
 

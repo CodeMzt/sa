@@ -57,6 +57,11 @@ static fsp_err_t arm_motors_init(void) {
         if (err != FSP_SUCCESS) return err;
         vTaskDelay(5);
     }
+    for (uint8_t i = 0; i < 5U; i++) {
+        err = robstride_enable_auto_report(joint_ids[i]);
+        if (err != FSP_SUCCESS) return err;
+        vTaskDelay(5);
+    }
     return FSP_SUCCESS;
 }
 
@@ -73,7 +78,7 @@ static void init_motion_config(motion_ctrl_config_t *config) {
     /* 示教模式参数 */
     for (int i = 0; i < 4; i++) {
         config->teach.kp[i] = 0.0f;      /* 零刚度 */
-        config->teach.kd[i] = 0.5f;      /* 中等阻尼 */
+        config->teach.kd[i] = 0.0f;      /* 中等阻尼 */
     }
     config->teach.enable_joint1 = true;  /* 默认关节1参与拖动 */
     config->teach.joint1_kd = 0.5f;
@@ -82,6 +87,12 @@ static void init_motion_config(motion_ctrl_config_t *config) {
     for (int i = 0; i < 4; i++) {
         config->playback.kp[i] = 50.0f;  /* 中等刚度 */
         config->playback.kd[i] = 1.0f;   /* 中等阻尼 */
+    }
+
+    /* IDLE保持模式参数 */
+    for (int i = 0; i < 4; i++) {
+        config->idle.kp[i] = 10.0f;     /* 刚度 */
+        config->idle.kd[i] = 1.0f;       /* 阻尼 */
     }
     
     /* 安全参数 */
@@ -208,9 +219,9 @@ static void sched_playback(const motion_config_t *cfg) {
         return;
     }
 
-    /* 若处于示教模式，切到空闲以便进入回放 */
+    /* 示教模式下不进入回放调度 */
     if (g_motion_ctrl.state == MOTION_STATE_TEACHING) {
-        motion_ctrl_stop(&g_motion_ctrl);
+        return;
     }
 
     /* 空队列时仅在需要时恢复语音 */
@@ -306,6 +317,43 @@ void user_on_estop_reset(void) {
     NVIC_SystemReset();
 }
 
+void user_on_teach_enter(void) {
+    if (g_sys_status.is_emergency_stop) {
+        LOG_W("Teach mode enter ignored: emergency stop active");
+        return;
+    }
+
+    g_sys_status.is_running = true;
+
+    if (g_sys_status.is_voice_command_running) {
+        g_sys_status.is_voice_command_running = false;
+        R_BSP_IrqDisable(g_i2s0_cfg.rxi_irq);
+    }
+
+    reset_pb_ctx();
+
+    if (g_motion_ctrl.state != MOTION_STATE_IDLE) {
+        motion_ctrl_stop(&g_motion_ctrl);
+    }
+
+    if (!motion_ctrl_start_teaching(&g_motion_ctrl)) {
+        LOG_E("Failed to enter teach mode");
+        g_sys_status.is_running = false;
+        return;
+    }
+
+    LOG_I("Teach mode entered");
+}
+
+void user_on_teach_exit(void) {
+    if (g_motion_ctrl.state == MOTION_STATE_TEACHING) {
+        motion_ctrl_stop(&g_motion_ctrl);
+    }
+    g_sys_status.is_running = false;
+    reset_pb_ctx();
+    LOG_I("Teach mode exited");
+}
+
 /**
  * @brief 运控模式主控制任务
  */
@@ -355,6 +403,7 @@ void can_comms_entry(void *pvParameters) {
     while (1) {
         float current_period_ms = get_current_mode_period_ms(g_motion_ctrl.state);
         TickType_t xPeriod = pdMS_TO_TICKS(current_period_ms);
+        float dt = current_period_ms / 1000.0f;  /* 秒 */
         
         /* 等待下一个控制周期 */
         xTaskDelayUntil(&xLastWakeTime, xPeriod);
@@ -376,12 +425,12 @@ void can_comms_entry(void *pvParameters) {
             }
 
             reset_pb_ctx();
+            motion_ctrl_loop(&g_motion_ctrl, dt);
             continue;
         }
 
         sched_playback(nvm_motion);
-        
-        float dt = current_period_ms / 1000.0f;  /* 秒 */
+
         motion_ctrl_loop(&g_motion_ctrl, dt);
         
     }
