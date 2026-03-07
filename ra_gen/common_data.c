@@ -106,7 +106,7 @@ const ioport_instance_t g_ioport =
 QueueHandle_t g_log_queue;
 #if 1
 StaticQueue_t g_log_queue_memory;
-uint8_t g_log_queue_queue_memory[128 * 8];
+uint8_t g_log_queue_queue_memory[128 * 16];
 #endif
 void rtos_startup_err_callback(void *p_instance, void *p_data);
 SemaphoreHandle_t g_uart_tx_sem;
@@ -132,7 +132,7 @@ void g_common_init(void)
 #else
                 xQueueCreate(
                 #endif
-                                8,
+                                16,
                                 128
 #if 1
                                 ,

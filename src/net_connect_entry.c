@@ -2,6 +2,7 @@
 #include "packet_packer.h"
 #include "sys_log.h"
 #include "shared_data.h"
+#include "test_mode.h"
 #include "nvm_manager.h"
 #include <string.h>
 
@@ -29,6 +30,13 @@ static bool is_valid_mac(const uint8_t mac[6]) {
 
 void net_connect_entry(void *pvParameters) {
     FSP_PARAMETER_NOT_USED (pvParameters);
+
+#if TEST_MODE_ACTIVE && !TEST_KEEP_NET_CONNECT
+    LOG_I("Test mode: net_connect thread disabled.");
+    vTaskDelete(NULL);
+    return;
+#endif
+
     vTaskDelay(pdMS_TO_TICKS(3000));
     LOG_I("Ethernet connect thread started.");
 

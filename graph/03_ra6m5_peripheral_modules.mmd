@@ -1,0 +1,45 @@
+flowchart LR
+  %% RA6M5-centric external functional modules
+
+  MCU[RA6M5 Core]
+
+  subgraph EXEC[机械执行模块]
+    M_CAN[CANFD0]
+    M_JOINT[EL05 Joint Motors x4]
+    M_GRIP[EL05 Gripper Motor x1]
+  end
+
+  subgraph NET[网络通信模块]
+    N_ETH[LAN8720A Ethernet PHY]
+    N_WIFI[W800 WiFi Module]
+    N_HOST[Host PC]
+  end
+
+  subgraph HMI[人机交互模块]
+    H_LCD[ST7796S LCD]
+    H_TP[FT5x06 Touch]
+  end
+
+  subgraph AUDIO[语音采集模块]
+    A_MIC[INMP441 Mic]
+  end
+
+  subgraph STORE[存储与调试模块]
+    S_FLASH[W25Q64 QSPI Flash]
+    S_LOG[Debug UART]
+  end
+
+  MCU -->|CANFD| M_CAN
+  M_CAN --> M_JOINT
+  M_CAN --> M_GRIP
+
+  MCU -->|RMII| N_ETH --> N_HOST
+  MCU -->|UART SCI6| N_WIFI --> N_HOST
+
+  MCU -->|SPI1| H_LCD
+  MCU -->|I2C IIC2| H_TP
+
+  MCU -->|I2S SSI0| A_MIC
+
+  MCU -->|QSPI0| S_FLASH
+  MCU -->|UART SCI7| S_LOG

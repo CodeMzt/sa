@@ -8,7 +8,7 @@
 #include "drv_microphone.h"
 #include "ei_integration.h"
 
-#define     MIC_GAIN                 32
+#define     MIC_GAIN                 16
 #define     MIC_RAW_BUFFER_SIZE      (MIC_FRAME_SAMPLES * 2)
 
 static int32_t audio_rx_buffer[2][MIC_RAW_BUFFER_SIZE];
@@ -47,7 +47,7 @@ static fsp_err_t inmp441_init(void){
 
     xSemaphoreGive(g_uart_tx_sem);
 
-    return g_i2s0.p_api->read(g_i2s0.p_ctrl, audio_rx_buffer[dtc_buffer_index], MIC_RAW_BUFFER_SIZE * 4);
+    return FSP_SUCCESS;
 }
 
 /**
@@ -77,6 +77,13 @@ static void signal_audio_ready(void) {
 }
 
 /**
+ * @brief 启动I2S的DTC接收数据
+ */
+fsp_err_t i2s0_start_rx(void) {
+    return g_i2s0.p_api->read(g_i2s0.p_ctrl, audio_rx_buffer[dtc_buffer_index], MIC_RAW_BUFFER_SIZE * 4);
+}
+
+/**
  * @brief I2S（实则是DTC）中断回调函数
  * @param p_args I2S 事件参数
  */
@@ -88,3 +95,4 @@ void i2s0_callback(i2s_callback_args_t *p_args) {
         mic_driver_instance.callback();
     }
 }
+

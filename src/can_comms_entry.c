@@ -14,6 +14,7 @@
 #include "robstride_motor.h"
 #include "motion_ctrl.h"
 #include "nvm_manager.h"
+#include "test_mode.h"
 #include "voice_command.h"
 #include <math.h>
 
@@ -143,6 +144,7 @@ static void resume_voice(void) {
     if (g_sys_status.is_running && !g_sys_status.is_emergency_stop) {
         g_sys_status.is_voice_command_running = true;
         R_BSP_IrqEnable(g_i2s0_cfg.rxi_irq);
+        i2s0_start_rx();
         LOG_I("Voice recognition resumed after playback");
     }
 
@@ -359,6 +361,13 @@ void user_on_teach_exit(void) {
  */
 void can_comms_entry(void *pvParameters) {
     FSP_PARAMETER_NOT_USED(pvParameters);
+
+#if TEST_MODE_ACTIVE && !TEST_KEEP_CAN_COMMS
+    LOG_I("Test mode: can_comms thread disabled.");
+    vTaskDelete(NULL);
+    return;
+#endif
+
     vTaskDelay(pdMS_TO_TICKS(3000));
     LOG_I("CAN communication thread started.");
     

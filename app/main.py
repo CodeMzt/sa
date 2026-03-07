@@ -28,6 +28,10 @@ def main(page: ft.Page):
     page.bgcolor = "#0D0D1A"
     page.padding = ft.Padding(left=16, right=16, top=36, bottom=10)
     page.fonts = {"HarmonyOS": "https://s1.hdslb.com/bfs/static/jinkela/long/font/regular.css"}
+    is_mobile = (
+        page.platform in (ft.PagePlatform.ANDROID, ft.PagePlatform.IOS)
+        or ((page.width or 0) > 0 and (page.width or 0) < 520)
+    )
 
     # ---- 连接状态指示 ----
     status_icon = ft.Icon(ft.Icons.CANCEL, color=ft.Colors.RED_400, size=14)
@@ -197,7 +201,7 @@ def main(page: ft.Page):
 
     LOG_PAGE_SIZE = 256  # 每页 256 字节
     log_pages_input = ft.TextField(
-        label="读取页数 (每页256B)", value="4", width=160,
+        label="页数(256B/页)", value="4", width=160,
         border_color=ACCENT_DIM, focused_border_color=ACCENT,
         text_size=12, on_submit=blur,
     )
@@ -241,7 +245,7 @@ def main(page: ft.Page):
         border_color=ACCENT_DIM, focused_border_color=ACCENT,
     )
     motion_group_name = ft.TextField(
-        label="动作组名称", value="", expand=True,
+        label="组名", value="", expand=True,
         border_color=ACCENT_DIM, focused_border_color=ACCENT, on_submit=blur
     )
     frame_m1 = ft.TextField(label="M1(°)", value="0", expand=True, border_color=ACCENT_DIM, focused_border_color=ACCENT, on_submit=blur)
@@ -261,6 +265,18 @@ def main(page: ft.Page):
     motion_add_frame_btn = ft.Button("新增帧", icon=ft.Icons.ADD)
     motion_del_frame_btn = ft.Button("删除帧", icon=ft.Icons.REMOVE)
     motion_save_btn = ft.Button("保存到设备", icon=ft.Icons.SAVE)
+
+    if is_mobile:
+        port_input.width = None
+        port_input.expand = True
+        motion_group_dd.width = None
+        motion_group_dd.expand = True
+        motion_frame_dd.width = None
+        motion_frame_dd.expand = True
+        frame_dur.width = None
+        frame_dur.expand = True
+        frame_act.width = None
+        frame_act.expand = True
 
     def _safe_float(s, default=0.0):
         try:
@@ -734,7 +750,6 @@ def main(page: ft.Page):
                 if pending_cmd["name"] is None:
                     break
                 time.sleep(0.1)
-            time.sleep(0.35)
             send_cmd({"cmd": "read_motion_cfg"})
 
         def do_connect():
@@ -981,12 +996,22 @@ def main(page: ft.Page):
         padding=ft.Padding(bottom=10),
     )
 
+    conn_controls_mobile = [
+        ft.Text("网络连接", size=13, weight=ft.FontWeight.W_600, color=TEXT_DIM),
+        ft.Row([ip_input], spacing=10),
+        ft.Row([port_input], spacing=10),
+        ft.Row([connect_btn], spacing=10),
+        ft.Row([_cmd_button("Ping", ft.Icons.PODCASTS, ping_click, bgcolor="#263238")], spacing=10),
+    ]
+
+    conn_controls_desktop = [
+        ft.Text("网络连接", size=13, weight=ft.FontWeight.W_600, color=TEXT_DIM),
+        ft.Row([ip_input, port_input], spacing=10),
+        ft.Row([connect_btn, _cmd_button("Ping", ft.Icons.PODCASTS, ping_click, bgcolor="#263238")], spacing=10),
+    ]
+
     conn_card = ft.Container(
-        content=ft.Column([
-            ft.Text("网络连接", size=13, weight=ft.FontWeight.W_600, color=TEXT_DIM),
-            ft.Row([ip_input, port_input], spacing=10),
-            ft.Row([connect_btn, _cmd_button("Ping", ft.Icons.PODCASTS, ping_click, bgcolor="#263238")]),
-        ], spacing=10),
+        content=ft.Column(conn_controls_mobile if is_mobile else conn_controls_desktop, spacing=10),
         bgcolor=BG_CARD, border_radius=12, padding=16,
         border=ft.Border.all(1, "#2A2A3E"),
     )
@@ -1016,46 +1041,91 @@ def main(page: ft.Page):
     current_limit_fields = [ft.TextField(label=f"电流限制{i+1}", value="2.0", border_color=ACCENT_DIM, focused_border_color=ACCENT, text_size=13, expand=True, on_submit=blur) for i in range(4)]
     grip_force_max_field = ft.TextField(label="最大抓取力度", value="5.0", border_color=ACCENT_DIM, focused_border_color=ACCENT, text_size=13, expand=True, on_submit=blur)
 
+    sys_controls_mobile = [
+        ft.Text("系统配置", size=13, weight=ft.FontWeight.W_600, color=TEXT_DIM),
+        ft.Row([dev_ip], spacing=10),
+        ft.Row([dev_mask], spacing=10),
+        ft.Row([dev_gw], spacing=10),
+        ft.Row([srv_ip], spacing=10),
+        ft.Row([srv_port], spacing=10),
+        ft.Row([dbg_port], spacing=10),
+        ft.Row([wifi_ssid], spacing=10),
+        ft.Row([wifi_psk], spacing=10),
+        ft.Divider(height=1, color="#333"),
+        ft.Text("角度限制", size=12, color=ACCENT, weight=ft.FontWeight.W_600),
+        ft.Row(angle_min_fields[:2], spacing=10),
+        ft.Row(angle_min_fields[2:], spacing=10),
+        ft.Row(angle_max_fields[:2], spacing=10),
+        ft.Row(angle_max_fields[2:], spacing=10),
+        ft.Divider(height=1, color="#333"),
+        ft.Text("电流与力度", size=12, color=ACCENT, weight=ft.FontWeight.W_600),
+        ft.Row(current_limit_fields[:2], spacing=10),
+        ft.Row(current_limit_fields[2:], spacing=10),
+        ft.Row([grip_force_max_field], spacing=10),
+        ft.Row([_cmd_button("读取配置", ft.Icons.CLOUD_DOWNLOAD, read_sys_click)], spacing=10),
+        ft.Row([_cmd_button("保存配置", ft.Icons.SAVE, save_sys_click, bgcolor="#2E7D32")], spacing=10),
+    ]
+
+    sys_controls_desktop = [
+        ft.Text("系统配置", size=13, weight=ft.FontWeight.W_600, color=TEXT_DIM),
+        ft.Row([dev_ip, dev_mask], spacing=10),
+        ft.Row([dev_gw, srv_ip], spacing=10),
+        ft.Row([srv_port, dbg_port, wifi_ssid], spacing=10),
+        ft.Row([wifi_psk], spacing=10),
+        ft.Divider(height=1, color="#333"),
+        ft.Text("角度限制", size=12, color=ACCENT, weight=ft.FontWeight.W_600),
+        ft.Row(angle_min_fields, spacing=10),
+        ft.Row(angle_max_fields, spacing=10),
+        ft.Divider(height=1, color="#333"),
+        ft.Text("电流与力度", size=12, color=ACCENT, weight=ft.FontWeight.W_600),
+        ft.Row(current_limit_fields, spacing=10),
+        ft.Row([grip_force_max_field], spacing=10),
+        ft.Row([
+            _cmd_button("读取配置", ft.Icons.CLOUD_DOWNLOAD, read_sys_click),
+            _cmd_button("保存配置", ft.Icons.SAVE, save_sys_click, bgcolor="#2E7D32"),
+        ], spacing=10),
+    ]
+
     sys_card = ft.Container(
-        content=ft.Column([
-            ft.Text("系统配置", size=13, weight=ft.FontWeight.W_600, color=TEXT_DIM),
-            ft.Row([dev_ip, dev_mask], spacing=10),
-            ft.Row([dev_gw, srv_ip], spacing=10),
-            ft.Row([srv_port, dbg_port, wifi_ssid], spacing=10),
-            ft.Row([wifi_psk], spacing=10),
-            ft.Divider(height=1, color="#333"),
-            ft.Text("角度限制", size=12, color=ACCENT, weight=ft.FontWeight.W_600),
-            ft.Row(angle_min_fields, spacing=10),
-            ft.Row(angle_max_fields, spacing=10),
-            ft.Divider(height=1, color="#333"),
-            ft.Text("电流与力度", size=12, color=ACCENT, weight=ft.FontWeight.W_600),
-            ft.Row(current_limit_fields, spacing=10),
-            ft.Row([grip_force_max_field], spacing=10),
-            ft.Row([
-                _cmd_button("读取配置", ft.Icons.CLOUD_DOWNLOAD, read_sys_click),
-                _cmd_button("保存配置", ft.Icons.SAVE, save_sys_click, bgcolor="#2E7D32"),
-            ], spacing=10),
-        ], spacing=10, scroll="auto", expand=True),
+        content=ft.Column(sys_controls_mobile if is_mobile else sys_controls_desktop, spacing=10, scroll="auto", expand=True),
         bgcolor=BG_CARD, border_radius=12, padding=16,
         border=ft.Border.all(1, "#2A2A3E"),
         expand=True
     )
 
+    motion_controls_mobile = [
+        ft.Text("运动配置", size=13, weight=ft.FontWeight.W_600, color=TEXT_DIM),
+        ft.Row([_cmd_button("读取运动配置", ft.Icons.SETTINGS_INPUT_COMPOSITE, read_motion_click)], spacing=10),
+        ft.Row([motion_save_btn], spacing=10),
+        ft.Row([motion_group_dd, motion_frame_dd], spacing=10),
+        ft.Row([motion_group_name], spacing=10),
+        ft.Row([frame_m1, frame_m2], spacing=10),
+        ft.Row([frame_m3, frame_m4], spacing=10),
+        ft.Row([frame_dur, frame_act], spacing=10),
+        ft.Row([motion_add_frame_btn, motion_del_frame_btn], spacing=10),
+        ft.Container(
+            content=motion_data_view, expand=True,
+            bgcolor=BG_LOG, border_radius=8, padding=10,
+        ),
+    ]
+
+    motion_controls_desktop = [
+        ft.Text("运动配置", size=13, weight=ft.FontWeight.W_600, color=TEXT_DIM),
+        ft.Row([
+            _cmd_button("读取运动配置", ft.Icons.SETTINGS_INPUT_COMPOSITE, read_motion_click),
+            motion_save_btn,
+        ], spacing=10),
+        ft.Row([motion_group_dd, motion_frame_dd, motion_group_name], spacing=10),
+        ft.Row([frame_m1, frame_m2, frame_m3, frame_m4], spacing=10),
+        ft.Row([frame_dur, frame_act, motion_add_frame_btn, motion_del_frame_btn], spacing=10, wrap=True),
+        ft.Container(
+            content=motion_data_view, expand=True,
+            bgcolor=BG_LOG, border_radius=8, padding=10,
+        ),
+    ]
+
     motion_card = ft.Container(
-        content=ft.Column([
-            ft.Text("运动配置", size=13, weight=ft.FontWeight.W_600, color=TEXT_DIM),
-            ft.Row([
-                _cmd_button("读取运动配置", ft.Icons.SETTINGS_INPUT_COMPOSITE, read_motion_click),
-                motion_save_btn,
-            ], spacing=10),
-            ft.Row([motion_group_dd, motion_frame_dd, motion_group_name], spacing=10),
-            ft.Row([frame_m1, frame_m2, frame_m3, frame_m4], spacing=10),
-            ft.Row([frame_dur, frame_act, motion_add_frame_btn, motion_del_frame_btn], spacing=10, wrap=True),
-            ft.Container(
-                content=motion_data_view, expand=True,
-                bgcolor=BG_LOG, border_radius=8, padding=10,
-            ),
-        ], spacing=10, expand=True),
+        content=ft.Column(motion_controls_mobile if is_mobile else motion_controls_desktop, spacing=10, expand=True),
         bgcolor=BG_CARD, border_radius=12, padding=16, expand=True,
         border=ft.Border.all(1, "#2A2A3E"),
     )

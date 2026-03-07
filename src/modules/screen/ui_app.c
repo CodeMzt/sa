@@ -12,6 +12,7 @@
 #include "drv_wifi.h"
 #include "nvm_types.h"
 #include "nvm_manager.h"
+#include "drv_microphone.h"
 
 /* -------------------------------------------------------------------------- */
 /* Private Variables                                                          */
@@ -815,6 +816,8 @@ static void event_voice_start_cb(lv_event_t * e) {
     g_sys_status.is_voice_command_running = !g_sys_status.is_voice_command_running;
 
     if (g_sys_status.is_voice_command_running) {
+        R_BSP_IrqEnable(g_i2s0_cfg.rxi_irq);
+        i2s0_start_rx();
         lv_obj_remove_style(btn_start_stop, &style_btn_green, 0);
         lv_obj_add_style(btn_start_stop, &style_btn_red, 0);
         lv_label_set_text(label_btn_start, "STOP");
@@ -822,8 +825,6 @@ static void event_voice_start_cb(lv_event_t * e) {
         if (label_voice_status != NULL && lv_obj_is_valid(label_voice_status)) {
             lv_label_set_text(label_voice_status, "Listening...");
         }
-
-        R_BSP_IrqEnable(g_i2s0_cfg.rxi_irq);
         user_on_voice_start();
     } else {
         R_BSP_IrqDisable(g_i2s0_cfg.rxi_irq);

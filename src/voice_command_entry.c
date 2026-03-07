@@ -4,6 +4,7 @@
 #include "log_task.h"
 #include "ei_integration.h"
 #include "shared_data.h"
+#include "test_mode.h"
 #include "ui_app.h"
 #include <stdio.h>
 #include <string.h>
@@ -20,14 +21,21 @@ typedef struct __attribute__((packed)) {
 static audio_packet_t g_packets;
 static volatile uint16_t g_fill_pos = 0;
 
-#define VOTE_WINDOW_SIZE    10
-#define VOTE_FORCEPS        36
-#define VOTE_HEMOSTAT       36
-#define VOTE_SCALPEL        36
+#define VOTE_WINDOW_SIZE    12
+#define VOTE_FORCEPS        35
+#define VOTE_HEMOSTAT       15
+#define VOTE_SCALPEL        25
 
 static uint8_t g_vote_history[VOTE_WINDOW_SIZE];
 static uint8_t g_vote_index = 0;
 static uint8_t g_vote_count = 0;
+
+/* Test-only path: enabled only when VOICE_TEST_MODE is defined. */
+#if defined(VOICE_TEST_MODE)
+#define VOICE_TEST_ENABLED (1)
+#else
+#define VOICE_TEST_ENABLED (0)
+#endif
 
 /**
  * @brief 窗口投票处理
@@ -83,6 +91,13 @@ static int process_vote_window(int inference_result) {
 
 void voice_command_entry(void *pvParameters) {
     FSP_PARAMETER_NOT_USED(pvParameters);
+
+#if TEST_MODE_ACTIVE && !TEST_KEEP_VOICE_COMMAND
+    LOG_I("Test mode: voice_command thread disabled.");
+    vTaskDelete(NULL);
+    return;
+#endif
+
     vTaskDelay(pdMS_TO_TICKS(1000));
     fsp_err_t err = mic_driver_instance.init();
     if (err != FSP_SUCCESS) {
@@ -93,18 +108,33 @@ void voice_command_entry(void *pvParameters) {
     LOG_D("Voice Command Thread Start.");
     g_sys_status.is_mic_connected = true;
     R_BSP_IrqDisable(g_i2s0_cfg.rxi_irq);
+
+#if VOICE_TEST_ENABLED
+    g_sys_status.is_voice_command_running = true;
+    R_BSP_IrqEnable(g_i2s0_cfg.rxi_irq);
+    i2s0_start_rx();
+    LOG_I("VOICE_TEST_MODE enabled: auto start voice test.");
+#endif
+
     while(1) {
         while(g_sys_status.is_voice_command_running) {
             int ret = ei_run_inference();
             if(ret != -1) {
                 int final_result = process_vote_window(ret);
+
                 if(final_result >= 1 && final_result <= 3) {
+#if VOICE_TEST_ENABLED
+                      LOG_I("VT_EVT,id=%d,label=%s",
+                          final_result,
+                          ei_get_label_name(final_result));
+#else
                     LOG_D("Add instrument %d to queue.", get_instrument_name(final_result));
                     add_instrument_to_queue(final_result);
                     update_queue_display_string();
+#endif
                 }
             }
-            vTaskDelay(5);
+            vTaskDelay(20);
         }
         vTaskDelay(100);
     }

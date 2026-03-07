@@ -8,9 +8,17 @@
 #include "drv_wifi.h"
 #include "nvm_manager.h"
 #include "shared_data.h"
+#include "test_mode.h"
 
 void wifi_debug_entry(void *pvParameters) {
     FSP_PARAMETER_NOT_USED(pvParameters);
+
+#if TEST_MODE_ACTIVE && !TEST_KEEP_WIFI_DEBUG
+    LOG_I("Test mode: wifi_debug thread disabled.");
+    vTaskDelete(NULL);
+    return;
+#endif
+
     vTaskDelay(pdMS_TO_TICKS(10));
 
     fsp_err_t err = nvm_init();

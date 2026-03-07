@@ -35,5 +35,7 @@ extern microphone_driver_t mic_driver_instance;
 extern SemaphoreHandle_t audio_semaphore;
 
 
+fsp_err_t i2s0_start_rx(void);
+
 
 #endif /* DRV_MICROPHONE_H_ */

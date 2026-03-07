@@ -698,7 +698,7 @@
     <object id="rtos.awsfreertos.object.queue.913415362">
       <property id="rtos.awsfreertos.object.queue.symbol" value="g_log_queue"/>
       <property id="rtos.awsfreertos.object.queue.item_size" value="128"/>
-      <property id="rtos.awsfreertos.object.queue.queue_length" value="8"/>
+      <property id="rtos.awsfreertos.object.queue.queue_length" value="16"/>
       <property id="rtos.awsfreertos.object.queue.allocation" value="rtos.awsfreertos.object.queue.allocation.static"/>
     </object>
     <object id="rtos.awsfreertos.object.binary_semaphore.518961625">

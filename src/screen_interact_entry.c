@@ -3,6 +3,7 @@
 #include "drv_i2c_touchpad.h"
 #include "drv_spi_display.h"
 #include "sys_log.h"
+#include "test_mode.h"
 #include "ui_app.h"
 #include "lv_port.h"
 #include "lvgl\lvgl.h"
@@ -15,6 +16,13 @@
 
 void screen_interact_entry(void *pvParameters) {
     FSP_PARAMETER_NOT_USED(pvParameters);
+
+#if TEST_MODE_ACTIVE && !TEST_KEEP_SCREEN_INTERACT
+    LOG_I("Test mode: screen_interact thread disabled.");
+    vTaskDelete(NULL);
+    return;
+#endif
+
     vTaskDelay(pdMS_TO_TICKS(3200));
 
     lv_port_init();

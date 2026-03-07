@@ -1092,7 +1092,7 @@ FSP Configuration
   Object "g_log_queue Queue"
     Symbol: g_log_queue
     Item Size (Bytes): 128
-    Queue Length (Items): 8
+    Queue Length (Items): 16
     Memory Allocation: Static
     
   Object "g_uart_tx_sem Binary Semaphore"
