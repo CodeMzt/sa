@@ -31,6 +31,8 @@ volatile teach_jog_cmd_t g_teach_jog_cmd = {
     .last_update_tick = 0U,
 };
 
+volatile bool g_log_system_ready = false;
+
 /**
  * @brief 检查器械是否在队列中
  * @param inst 器械类型

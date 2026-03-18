@@ -14,10 +14,10 @@
 #include "nvm_manager.h"
 #include "test_mode.h"
 #include "voice_command.h"
-#include <math.h>
 
 #define PLAYBACK_CHAIN_LEN 3U
-#define TEACH_JOG_TIMEOUT_MS (300U)
+#define LOG_READY_WAIT_SLICE_MS   10U
+#define LOG_READY_WAIT_MAX_MS   1000U
 
 /* 回放执行上下文结构体 */
 typedef struct {
@@ -29,7 +29,6 @@ typedef struct {
 } playback_exec_ctx_t;
 
 static playback_exec_ctx_t g_playback_ctx = {0};
-static uint8_t g_last_jog_motor_id = 0U;
 
 /* 动作序列映射：FORCEPS->[0,1,6], HEMOSTAT->[2,3,6], SCALPEL->[4,5,6] */
 static const uint8_t g_group_chain_map[4][PLAYBACK_CHAIN_LEN] = {
@@ -39,43 +38,19 @@ static const uint8_t g_group_chain_map[4][PLAYBACK_CHAIN_LEN] = {
     {4U, 5U, 6U}
 };
 
-static void apply_joint_current_limits_from_nvm(void) {
-    const sys_config_t *sys_cfg = nvm_get_sys_config();
-    const uint8_t joint_ids[4] = {
-        ROBSTRIDE_MOTOR_ID_JOINT1,
-        ROBSTRIDE_MOTOR_ID_JOINT2,
-        ROBSTRIDE_MOTOR_ID_JOINT3,
-        ROBSTRIDE_MOTOR_ID_JOINT4
-    };
-
-    if (sys_cfg == NULL) {
-        LOG_E("Current limit apply skipped: sys config unavailable");
-        return;
-    }
-
-    for (uint8_t i = 0U; i < 4U; i++) {
-        float limit_cur_a = ((float)sys_cfg->current_limit[i]) * 0.01f;
-        fsp_err_t err = robstride_write_param_float(joint_ids[i], ROBSTRIDE_PARAM_LIMIT_CUR, limit_cur_a);
-        if (err != FSP_SUCCESS) {
-            LOG_E("Current limit apply failed: motor=%u limit=%.2fA err=%d",
-                  (unsigned int)joint_ids[i],
-                  limit_cur_a,
-                  err);
-            continue;
-        }
-
-        LOG_I("Current limit applied: motor=%u limit=%.2fA",
-              (unsigned int)joint_ids[i],
-              limit_cur_a);
-        vTaskDelay(2);
-    }
-}
 
 /**
- * @brief  初始化所有关节电机（运控模式）
- * @return FSP_SUCCESS 或首个错误码
+ * @brief  初始化所有关节电机（运控模式）,并应用 NVM 中的当前限制参数
+ * @param config 输出参数：当前电机配置（控制器参数 + 安全参数）
+ * @note 该函数会启用电机并开启自动上报，调用后电机状态将通过全局 g_motors 数组更新
+ * @retval FSP_SUCCESS 成功
+ * @retval 其他值 失败（首个错误码）
+ * @details 错误码说明：
+ *   - FSP_SUCCESS: 成功启用所有电机并应用参数
+ *   - FSP_ERR_INVALID_POINTER: 输入参数 config 为 NULL
+ *   - 其他 FSP_ERR_*: 具体电机启用或参数写入失败，错误码由 robstride_* 函数返回
  */
-static fsp_err_t arm_motors_init(void) {
+static fsp_err_t arm_motors_init(motion_ctrl_config_t *config) {
     fsp_err_t err;
     const uint8_t joint_ids[5] = {
         ROBSTRIDE_MOTOR_ID_JOINT1,
@@ -94,20 +69,12 @@ static fsp_err_t arm_motors_init(void) {
         if (err != FSP_SUCCESS) return err;
         vTaskDelay(5);
     }
-    return FSP_SUCCESS;
-}
 
-/**
- * @brief 初始化运控控制器配置
- * @param config 输出配置指针
- */
-static void init_motion_config(motion_ctrl_config_t *config) {
-    if (config == NULL) return;
+    if (config == NULL) return FSP_ERR_INVALID_POINTER;
     
     /* 使用默认配置 */
     memset(config, 0, sizeof(motion_ctrl_config_t));
-    
-    /* 三模式共用控制器参数 */
+
     for (int i = 0; i < 4; i++) {
         config->controller.kp[i] = 8.0f;
         config->controller.kd[i] = 0.5f;
@@ -115,13 +82,37 @@ static void init_motion_config(motion_ctrl_config_t *config) {
     
     /* 安全参数 */
     for (int i = 0; i < 4; i++) {
-        config->max_torque[i] = 6.0f;    /* 最大力矩 */
+        config->max_torque[i] = 1.0f;    /* 最大力矩 */
         config->max_velocity[i] = 0.8f; /* 最大速度（关节侧rad/s，减速比换算前） */
     }
-    
-    /* 初始化重力补偿参数 */
-    grav_init_default(&config->grav_params);
+
+    const sys_config_t *sys_cfg = nvm_get_sys_config();
+
+    if (sys_cfg == NULL) {
+        LOG_E("Current limit apply skipped: sys config unavailable");
+        return FSP_ERR_INVALID_POINTER;
+    }
+
+    for (uint8_t i = 0U; i < 4U; i++) {
+        float limit_cur_a = ((float)sys_cfg->current_limit[i]) * 0.01f;
+        fsp_err_t err = robstride_write_param_float(joint_ids[i], ROBSTRIDE_PARAM_LIMIT_CUR, limit_cur_a);
+        if (err != FSP_SUCCESS) {
+            LOG_E("Current limit apply failed: motor=%u limit=%.2fA err=%d",
+                  (unsigned int)joint_ids[i],
+                  limit_cur_a,
+                  err);
+            continue;
+        }
+
+        LOG_D("Current limit applied: motor=%u limit=%.2fA",
+              (unsigned int)joint_ids[i],
+              limit_cur_a);
+        vTaskDelay(2);
+    }
+
+    return FSP_SUCCESS;
 }
+
 
 /**
  * @brief 重置回放执行上下文
@@ -134,73 +125,8 @@ static void reset_pb_ctx(void) {
     g_playback_ctx.stage = 0U;
 }
 
-static bool is_teach_jog_motor_valid(uint8_t motor_id) {
-    return (motor_id >= ROBSTRIDE_MOTOR_ID_JOINT1) && (motor_id <= ROBSTRIDE_MOTOR_ID_GRIPPER);
-}
-
-static void teach_jog_apply_stop(uint8_t motor_id) {
-    if (!is_teach_jog_motor_valid(motor_id)) return;
-    (void)robstride_set_speed(motor_id, 0.0f, 0.0f, 0.0f);
-}
-
-static void clear_teach_jog_cmd(bool stop_last_motor) {
-    uint8_t motor_id = g_last_jog_motor_id;
-
-    g_teach_jog_cmd.active = false;
-    g_teach_jog_cmd.motor_id = 0U;
-    g_teach_jog_cmd.vel_centi_rad_s = 0;
-    g_teach_jog_cmd.last_update_tick = 0U;
-
-    if (stop_last_motor && is_teach_jog_motor_valid(motor_id)) {
-        teach_jog_apply_stop(motor_id);
-    }
-
-    g_last_jog_motor_id = 0U;
-}
-
-static bool handle_teach_jog_mode(void) {
-    bool active = g_teach_jog_cmd.active;
-    uint8_t motor_id = g_teach_jog_cmd.motor_id;
-    int16_t vel_centi = g_teach_jog_cmd.vel_centi_rad_s;
-    uint32_t last_update_tick = g_teach_jog_cmd.last_update_tick;
-    uint32_t now_tick = (uint32_t)xTaskGetTickCount();
-
-    if (!active) {
-        if (g_last_jog_motor_id != 0U) {
-            teach_jog_apply_stop(g_last_jog_motor_id);
-            g_last_jog_motor_id = 0U;
-        }
-        return false;
-    }
-
-    if (!is_teach_jog_motor_valid(motor_id)) {
-        LOG_W("Teach jog rejected: invalid motor id %u", (unsigned int)motor_id);
-        clear_teach_jog_cmd(true);
-        return true;
-    }
-
-    if ((uint32_t)(now_tick - last_update_tick) > (uint32_t)pdMS_TO_TICKS(TEACH_JOG_TIMEOUT_MS)) {
-        LOG_W("Teach jog timeout: motor=%u", (unsigned int)motor_id);
-        clear_teach_jog_cmd(true);
-        return true;
-    }
-
-    if (vel_centi == 0) {
-        clear_teach_jog_cmd(true);
-        return true;
-    }
-
-    if (g_last_jog_motor_id != 0U && g_last_jog_motor_id != motor_id) {
-        teach_jog_apply_stop(g_last_jog_motor_id);
-    }
-
-    if (g_last_jog_motor_id != motor_id) {
-        robstride_stop(motor_id);
-        (void)robstride_set_run_mode(motor_id, ROBSTRIDE_MODE_SPEED);
-        robstride_enable(motor_id);
-        g_last_jog_motor_id = motor_id;
-        LOG_I("Teach jog active on motor %u", (unsigned int)motor_id);
-    }
+static void prepare_teach_jog_context(void) {
+    if (!g_teach_jog_cmd.active) return;
 
     if (g_sys_status.is_voice_command_running) {
         g_sys_status.is_voice_command_running = false;
@@ -210,12 +136,15 @@ static bool handle_teach_jog_mode(void) {
     g_sys_status.is_running = false;
     reset_pb_ctx();
 
-    if (g_motion_ctrl.state != MOTION_STATE_IDLE) {
-        motion_ctrl_stop(&g_motion_ctrl);
-    }
+    if (g_motion_ctrl.state != MOTION_STATE_TEACHING) {
+        if (g_motion_ctrl.state != MOTION_STATE_IDLE) {
+            motion_ctrl_stop(&g_motion_ctrl);
+        }
 
-    (void)robstride_set_speed(motor_id, ((float)vel_centi) * 0.01f, 0.0f, 0.0f);
-    return true;
+        if (!motion_ctrl_start_teaching(&g_motion_ctrl)) {
+            LOG_E("Failed to enter teaching mode for teach jog");
+        }
+    }
 }
 
 /**
@@ -392,7 +321,7 @@ void user_on_emergency_stop(void) {
     g_sys_status.is_running = false;
     g_sys_status.is_voice_command_running = false;
     R_BSP_IrqDisable(g_i2s0_cfg.rxi_irq);
-    clear_teach_jog_cmd(true);
+    motion_ctrl_clear_teach_jog(&g_motion_ctrl, true);
     reset_pb_ctx();
     LOG_E("Emergency stop requested from UI");
 }
@@ -423,7 +352,17 @@ void can_comms_entry(void *pvParameters) {
     return;
 #endif
 
-    vTaskDelay(pdMS_TO_TICKS(3000));
+    uint32_t wait_ms = 0U;
+    while ((!g_log_system_ready) && (wait_ms < LOG_READY_WAIT_MAX_MS)) {
+        vTaskDelay(pdMS_TO_TICKS(LOG_READY_WAIT_SLICE_MS));
+        wait_ms += LOG_READY_WAIT_SLICE_MS;
+    }
+
+    fsp_err_t nvm_err = nvm_init();
+    if (nvm_err != FSP_SUCCESS) {
+        LOG_E("NVM init failed in can task: %d", nvm_err);
+    }
+
     LOG_I("CAN communication thread started.");
     
     fsp_err_t err;
@@ -434,16 +373,10 @@ void can_comms_entry(void *pvParameters) {
     if (err != FSP_SUCCESS) LOG_E("CANFD0 initialization failed: %d", err);
     
     /* 初始化电机 */
-    err = arm_motors_init();
+    motion_ctrl_config_t motion_config;
+    err = arm_motors_init(&motion_config);
     if (err != FSP_SUCCESS) LOG_E("Failed to initialize arm motors: %d", err);
 
-    /* 启动时一次性下发J1~J4电流限制（A） */
-    apply_joint_current_limits_from_nvm();
-    
-    /* 初始化运控控制器 */
-    motion_ctrl_config_t motion_config;
-    init_motion_config(&motion_config);
-    
     if (!motion_ctrl_init(&g_motion_ctrl, &motion_config)) LOG_E("Failed to initialize motion controller");
     
     g_motion_ctrl.state = MOTION_STATE_IDLE;
@@ -457,7 +390,7 @@ void can_comms_entry(void *pvParameters) {
     x_last_wake_time = xTaskGetTickCount();
     
     while (1) {
-        float current_period_ms = get_current_mode_period_ms(g_motion_ctrl.state);
+        float current_period_ms = get_ctrl_period(g_motion_ctrl.state);
         TickType_t x_period = pdMS_TO_TICKS(current_period_ms);
         float dt = current_period_ms / 1000.0f;  /* 秒 */
         
@@ -467,15 +400,17 @@ void can_comms_entry(void *pvParameters) {
         /* 处理急停 */
         if (g_sys_status.is_emergency_stop) {
             if (g_motion_ctrl.state != MOTION_STATE_IDLE) motion_ctrl_emergency_stop(&g_motion_ctrl);
-            clear_teach_jog_cmd(true);
+            motion_ctrl_clear_teach_jog(&g_motion_ctrl, true);
             reset_pb_ctx();
             continue;
         }
 
-        if (handle_teach_jog_mode()) {
+        if (g_teach_jog_cmd.active || g_motion_ctrl.state == MOTION_STATE_TEACHING) {
+            prepare_teach_jog_context();
+            motion_ctrl_loop(&g_motion_ctrl, dt);
             continue;
         }
-
+        
         /* 系统未运行时保持空闲状态，等待START命令 */
         if (!g_sys_status.is_running) {
             if (g_motion_ctrl.state != MOTION_STATE_IDLE) {

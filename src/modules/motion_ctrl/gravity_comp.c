@@ -1,6 +1,6 @@
 /**
  * @file gravity_comp.c
- * @brief 重力补偿模块实现
+ * @brief 重力补偿模块实现(暂时移除，后续根据需要重新集成)
  * @date 2026-02-27
  * @author Ma Ziteng
  */

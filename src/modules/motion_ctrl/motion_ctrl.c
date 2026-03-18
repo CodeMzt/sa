@@ -10,14 +10,81 @@
 #include "shared_data.h"
 #include "nvm_manager.h"
 #include <string.h>
-#include <math.h>
 
 #define DEG2RAD_F 0.01745329251994329577f
 #define GRIPPER_ACTION_KP      8.0f
 #define GRIPPER_ACTION_KD      0.8f
+#define TEACH_JOG_TIMEOUT_MS   (300U)
+#define JOG_GRIPPER_KP         (8.0f)
+#define JOG_GRIPPER_KD         (0.8f)
 
 /* 全局控制器实例 */
 motion_controller_t g_motion_ctrl = {0};
+
+static const uint8_t k_joint_ids[4] = {
+    ROBSTRIDE_MOTOR_ID_JOINT1,
+    ROBSTRIDE_MOTOR_ID_JOINT2,
+    ROBSTRIDE_MOTOR_ID_JOINT3,
+    ROBSTRIDE_MOTOR_ID_JOINT4
+};
+
+static float get_motor_feedback_position(uint8_t motor_id) {
+    uint8_t motor_index = robstride_get_motor_index(motor_id);
+    if (motor_index >= ROBSTRIDE_MOTOR_NUM) return 0.0f;
+    return g_motors[motor_index].feedback.position;
+}
+
+static void reset_teach_jog_ref(motion_controller_t *ctrl) {
+    if (ctrl == NULL) return;
+    ctrl->teach_jog_motor_id = 0U;
+    ctrl->teach_jog_q_ref = 0.0f;
+    ctrl->teach_jog_q_valid = false;
+}
+
+static float clampf_range(float value, float min_value, float max_value) {
+    if (value < min_value) return min_value;
+    if (value > max_value) return max_value;
+    return value;
+}
+
+static bool send_joint_motion_targets(motion_controller_t *ctrl,
+                                      const float q_target[4],
+                                      const float v_target[4]) {
+    bool all_ok = true;
+    static uint32_t s_q_clamp_log_div[4] = {0U};
+
+    if (ctrl == NULL || q_target == NULL || v_target == NULL) return false;
+
+    for (uint8_t i = 0; i < 4U; i++) {
+        float q_cmd = robstride_clamp_position_cmd(k_joint_ids[i], q_target[i]);
+        float v_lim = ctrl->config.max_velocity[i];
+        float v_cmd = clampf_range(v_target[i], -v_lim, v_lim);
+
+        if (q_cmd != q_target[i]) {
+            if ((s_q_clamp_log_div[i]++ % 20U) == 0U) {
+                LOG_W("Motion q clamp: J%u q=%.3f -> %.3f rad",
+                      (unsigned int)(i + 1U),
+                      q_target[i],
+                      q_cmd);
+            }
+        } else {
+            s_q_clamp_log_div[i] = 0U;
+        }
+
+        fsp_err_t err = robstride_motion_control(k_joint_ids[i],
+                                                 q_cmd,
+                                                 v_cmd,
+                                                 ctrl->config.controller.kp[i],
+                                                 ctrl->config.controller.kd[i],
+                                                 0.0f);
+        if (err != FSP_SUCCESS) {
+            all_ok = false;
+            LOG_E("Motion cmd failed: joint=%u err=%d", (unsigned int)(i + 1U), err);
+        }
+    }
+
+    return all_ok;
+}
 
 static fsp_err_t trigger_gripper_action(uint8_t action) {
     if (action == ACTION_GRIP) {
@@ -37,28 +104,6 @@ static fsp_err_t trigger_gripper_action(uint8_t action) {
     return FSP_ERR_ASSERTION;
 }
 
-static bool capture_idle_hold_targets(motion_controller_t *ctrl) {
-    if (ctrl == NULL) return false;
-
-    float q_abs[4] = {0};
-    if (!motion_adapter_capture_abs(&ctrl->adapter, q_abs)) {
-        ctrl->idle_hold_valid = false;
-        LOG_E("Capture idle abs failed");
-        return false;
-    }
-
-    ctrl->idle_q_hold[0] = q_abs[0];
-    ctrl->idle_q_hold[1] = q_abs[1];
-    ctrl->idle_q_hold[2] = q_abs[2];
-    ctrl->idle_q_hold[3] = q_abs[3];
-    ctrl->idle_hold_valid = true;
-
-    memcpy(ctrl->last_q_target, ctrl->idle_q_hold, 4 * sizeof(float));
-    memset(ctrl->last_v_target, 0, 4 * sizeof(float));
-
-    return true;
-}
-
 static void motion_ctrl_set_common_pd(motion_controller_t *ctrl, const float kp[4], const float kd[4]) {
     if (ctrl == NULL) return;
     if (kp != NULL) memcpy(ctrl->config.controller.kp, kp, 4 * sizeof(float));
@@ -74,7 +119,7 @@ static const motion_ctrl_config_t DEFAULT_CONFIG = {
     },
     
     /* 安全参数 */
-    .max_torque = {6.0f, 6.0f, 6.0f, 6.0f},        /* 最大力矩 */
+    .max_torque = {1.0f, 1.0f, 1.0f, 1.0f},        /* 最大力矩 */
     .max_velocity = {0.2f, 0.2f, 0.2f, 0.2f}   /* 最大速度 */
 };
 
@@ -92,7 +137,6 @@ bool motion_ctrl_init(motion_controller_t *ctrl, const motion_ctrl_config_t *con
     ctrl->state = MOTION_STATE_IDLE;
     ctrl->is_initialized = false;
     ctrl->emergency_stop = false;
-    ctrl->idle_hold_valid = false;
     
     /* 设置配置 */
     if (config != NULL) memcpy(&ctrl->config, config, sizeof(motion_ctrl_config_t));
@@ -104,28 +148,7 @@ bool motion_ctrl_init(motion_controller_t *ctrl, const motion_ctrl_config_t *con
     
     /* 初始化轨迹控制器 */
     traj_reset(&ctrl->trajectory);
-    
-    /* 初始化输出数组 */
-    for (int i = 0; i < 4; i++) {
-        ctrl->last_q_target[i] = 0.0f;
-        ctrl->last_v_target[i] = 0.0f;
-        ctrl->idle_q_hold[i] = 0.0f;
-    }
 
-    motion_adapter_config_t adapter_cfg = {0};
-    adapter_cfg.nvm_save_interval_ms = 2000U;
-    for (int i = 0; i < 4; i++) {
-        adapter_cfg.kp[i] = ctrl->config.controller.kp[i];
-        adapter_cfg.kd[i] = ctrl->config.controller.kd[i];
-        adapter_cfg.max_velocity[i] = ctrl->config.max_velocity[i];
-        adapter_cfg.max_acceleration[i] = fmaxf(8.0f * ctrl->config.max_velocity[i], 8.0f);
-    }
-
-    if (!motion_adapter_init(&ctrl->adapter, &adapter_cfg)) {
-        LOG_E("Failed to initialize motion adapter");
-        return false;
-    }
-    
     ctrl->is_initialized = true;
     LOG_I("Motion controller initialized");
     
@@ -141,33 +164,26 @@ bool motion_ctrl_set_motion_mode(motion_controller_t *ctrl) {
         return false;
     }
     
-    LOG_I("Switching joints 1-4 to speed control mode...");
+    LOG_I("Switching joints 1-4 to motion control mode...");
     
     fsp_err_t err;
-    const uint8_t joint_ids[4] = {
-        ROBSTRIDE_MOTOR_ID_JOINT1,
-        ROBSTRIDE_MOTOR_ID_JOINT2,
-        ROBSTRIDE_MOTOR_ID_JOINT3,
-        ROBSTRIDE_MOTOR_ID_JOINT4
-    };
-    
-    /* 切换到速度模式 */
+    /* 切换到运控模式 */
     for (uint8_t i = 0; i < 4; i++) {
-        robstride_stop(joint_ids[i]);
-        err = robstride_set_run_mode(joint_ids[i], ROBSTRIDE_MODE_SPEED);
+        robstride_stop(k_joint_ids[i]);
+        err = robstride_set_run_mode(k_joint_ids[i], ROBSTRIDE_MODE_MOTION_CTRL);
         if (err != FSP_SUCCESS) {
-            LOG_E("Failed to set joint %d to speed mode: %d", i+1, err);
+            LOG_E("Failed to set joint %d to motion control mode: %d", i+1, err);
             return false;
         }
         vTaskDelay(5);  /* 等待模式切换完成 */
-        err = robstride_enable(joint_ids[i]);
+        err = robstride_enable(k_joint_ids[i]);
         if (err != FSP_SUCCESS) {
-            LOG_E("Failed to set joint %d to speed mode: %d", i+1, err);
+            LOG_E("Failed to enable joint %d after mode switch: %d", i+1, err);
             return false;
         }
     }
     
-    LOG_I("All joints switched to speed control mode");
+    LOG_I("All joints switched to motion control mode");
     return true;
 }
 
@@ -231,17 +247,11 @@ bool motion_ctrl_start_playback(motion_controller_t *ctrl, const action_sequence
     /* 回放控制统一使用弧度，并补入当前姿态作为起点帧 */
     action_sequence_t seq_ctrl = {0};
     if (seq->frame_count < MAX_FRAMES_PER_SEQ) {
-        float q_abs_start[4] = {0};
-        if (!motion_adapter_capture_abs(&ctrl->adapter, q_abs_start)) {
-            LOG_E("Playback start rejected: capture abs failed");
-            return false;
-        }
-
         seq_ctrl.frame_count = seq->frame_count + 1U;
-        seq_ctrl.frames[0].angle_m1 = q_abs_start[0];
-        seq_ctrl.frames[0].angle_m2 = q_abs_start[1];
-        seq_ctrl.frames[0].angle_m3 = q_abs_start[2];
-        seq_ctrl.frames[0].angle_m4 = q_abs_start[3];
+        seq_ctrl.frames[0].angle_m1 = g_motors[0].feedback.position;
+        seq_ctrl.frames[0].angle_m2 = g_motors[1].feedback.position;
+        seq_ctrl.frames[0].angle_m3 = g_motors[2].feedback.position;
+        seq_ctrl.frames[0].angle_m4 = g_motors[3].feedback.position;
         seq_ctrl.frames[0].duration_ms = 0U;
         seq_ctrl.frames[0].action = MOVE_ONLY;
 
@@ -290,40 +300,132 @@ bool motion_ctrl_start_playback(motion_controller_t *ctrl, const action_sequence
 void motion_ctrl_stop(motion_controller_t *ctrl) {
     if (ctrl == NULL || !ctrl->is_initialized) return;
 
-    /* 软停：仅切换到IDLE，不下发电机STOP，保持电机使能与运控模式 */
-    if (!capture_idle_hold_targets(ctrl)) {
-        ctrl->state = MOTION_STATE_ERROR;
-        ctrl->seq_running = false;
-        traj_reset(&ctrl->trajectory);
-        LOG_E("Motion control stop rejected: capture abs failed");
-        return;
-    }
+    robstride_stop(ROBSTRIDE_MOTOR_ID_JOINT1);
+    robstride_stop(ROBSTRIDE_MOTOR_ID_JOINT2);
+    robstride_stop(ROBSTRIDE_MOTOR_ID_JOINT3);
+    robstride_stop(ROBSTRIDE_MOTOR_ID_JOINT4);
+    robstride_stop(ROBSTRIDE_MOTOR_ID_GRIPPER);
 
     ctrl->state = MOTION_STATE_IDLE;
     ctrl->seq_running = false;
     traj_reset(&ctrl->trajectory);
-    motion_adapter_force_persist_sector(&ctrl->adapter);
+    reset_teach_jog_ref(ctrl);
 
-    LOG_I("Motion control switched to IDLE (motors remain enabled)");
+    LOG_I("Motion control stopped and switched to IDLE");
+}
+
+void motion_ctrl_clear_teach_jog(motion_controller_t *ctrl, bool stop_last_motor) {
+    uint8_t motor_id = 0U;
+
+    if (ctrl != NULL && robstride_is_motor_id_valid(ctrl->teach_jog_motor_id)) {
+        motor_id = ctrl->teach_jog_motor_id;
+    } else if (robstride_is_motor_id_valid(g_teach_jog_cmd.motor_id)) {
+        motor_id = g_teach_jog_cmd.motor_id;
+    }
+
+    g_teach_jog_cmd.active = false;
+    g_teach_jog_cmd.motor_id = 0U;
+    g_teach_jog_cmd.vel_centi_rad_s = 0;
+    g_teach_jog_cmd.last_update_tick = 0U;
+
+    if (stop_last_motor && robstride_is_motor_id_valid(motor_id)) {
+        (void)robstride_stop(motor_id);
+    }
+
+    reset_teach_jog_ref(ctrl);
 }
 
 /**
- * @brief 示教模式控制循环
+ * @brief 示教模式控制循环（teach_jog 驱动）
  * @param ctrl 控制器实例指针
  * @param dt 时间步长（秒）
  */
 static void teach_control_loop(motion_controller_t *ctrl, float dt) {
-    float q_target[4] = {0};
-    float v_target[4] = {0};  /* 速度目标为0 */
+    teach_jog_cmd_t jog_cmd_snapshot = {
+        .active = g_teach_jog_cmd.active,
+        .motor_id = g_teach_jog_cmd.motor_id,
+        .vel_centi_rad_s = g_teach_jog_cmd.vel_centi_rad_s,
+        .last_update_tick = g_teach_jog_cmd.last_update_tick,
+    };
 
-    if (!motion_adapter_capture_abs(&ctrl->adapter, q_target)) {
-        LOG_E("Teach capture abs failed");
+    bool active = jog_cmd_snapshot.active;
+    uint8_t motor_id = jog_cmd_snapshot.motor_id;
+    int16_t vel_centi = jog_cmd_snapshot.vel_centi_rad_s;
+    uint32_t last_update_tick = jog_cmd_snapshot.last_update_tick;
+    uint32_t now_tick = (uint32_t)xTaskGetTickCount();
+
+    if (dt <= 0.0f) dt = 0.01f;
+
+    if (!active) {
+        if (ctrl->teach_jog_motor_id != 0U) {
+            motion_ctrl_clear_teach_jog(ctrl, true);
+        }
+        ctrl->state = MOTION_STATE_IDLE;
         return;
     }
 
-    motion_adapter_set_pd(&ctrl->adapter, ctrl->config.controller.kp, ctrl->config.controller.kd);
-    if (!motion_adapter_step(&ctrl->adapter, dt, q_target, v_target, NULL, NULL, NULL)) {
-        LOG_E("Teach adapter step failed");
+    if (!robstride_is_motor_id_valid(motor_id)) {
+        LOG_W("Teach jog rejected: invalid motor id %u", (unsigned int)motor_id);
+        motion_ctrl_clear_teach_jog(ctrl, true);
+        ctrl->state = MOTION_STATE_IDLE;
+        return;
+    }
+
+    if ((uint32_t)(now_tick - last_update_tick) > (uint32_t)pdMS_TO_TICKS(TEACH_JOG_TIMEOUT_MS)) {
+        LOG_W("Teach jog timeout: motor=%u", (unsigned int)motor_id);
+        motion_ctrl_clear_teach_jog(ctrl, true);
+        ctrl->state = MOTION_STATE_IDLE;
+        return;
+    }
+
+    if (vel_centi == 0) {
+        motion_ctrl_clear_teach_jog(ctrl, true);
+        ctrl->state = MOTION_STATE_IDLE;
+        return;
+    }
+
+    if (ctrl->teach_jog_motor_id != 0U && ctrl->teach_jog_motor_id != motor_id) {
+        (void)robstride_stop(ctrl->teach_jog_motor_id);
+        reset_teach_jog_ref(ctrl);
+    }
+
+    if (ctrl->teach_jog_motor_id != motor_id) {
+        (void)robstride_stop(motor_id);
+        (void)robstride_set_run_mode(motor_id, ROBSTRIDE_MODE_MOTION_CTRL);
+        (void)robstride_enable(motor_id);
+        ctrl->teach_jog_motor_id = motor_id;
+        ctrl->teach_jog_q_ref = robstride_clamp_position_cmd(motor_id, get_motor_feedback_position(motor_id));
+        ctrl->teach_jog_q_valid = true;
+        LOG_I("Teach jog active on motor %u", (unsigned int)motor_id);
+    }
+
+    if (!ctrl->teach_jog_q_valid) {
+        ctrl->teach_jog_q_ref = robstride_clamp_position_cmd(motor_id, get_motor_feedback_position(motor_id));
+        ctrl->teach_jog_q_valid = true;
+    }
+
+    float v_cmd = ((float)vel_centi) * 0.01f;
+    float kp = JOG_GRIPPER_KP;
+    float kd = JOG_GRIPPER_KD;
+
+    if (robstride_is_joint_motor_id(motor_id)) {
+        uint8_t idx = motor_id - ROBSTRIDE_MOTOR_ID_JOINT1;
+        float v_lim = ctrl->config.max_velocity[idx];
+        v_cmd = clampf_range(v_cmd, -v_lim, v_lim);
+        kp = ctrl->config.controller.kp[idx];
+        kd = ctrl->config.controller.kd[idx];
+    }
+
+    ctrl->teach_jog_q_ref += v_cmd * dt;
+    ctrl->teach_jog_q_ref = robstride_clamp_position_cmd(motor_id, ctrl->teach_jog_q_ref);
+
+    if (robstride_motion_control(motor_id,
+                                 ctrl->teach_jog_q_ref,
+                                 v_cmd,
+                                 kp,
+                                 kd,
+                                 0.0f) != FSP_SUCCESS) {
+        LOG_E("Teach jog motion command failed: motor=%u", (unsigned int)motor_id);
     }
 }
 
@@ -355,26 +457,23 @@ static void playback_control_loop(motion_controller_t *ctrl, float dt) {
         if (q_target[i] < q_min) q_target[i] = q_min;
         else if (q_target[i] > q_max) q_target[i] = q_max;
     }
-    
-    /* 保存目标值 */
-    memcpy(ctrl->last_q_target, q_target, 4 * sizeof(float));
-    memcpy(ctrl->last_v_target, v_target, 4 * sizeof(float));
-    
-    float q_current[4] = {0};
-    float v_cmd[4] = {0};
-    float a_cmd[4] = {0};
 
-    motion_adapter_set_pd(&ctrl->adapter, ctrl->config.controller.kp, ctrl->config.controller.kd);
-    if (!motion_adapter_step(&ctrl->adapter, dt, q_target, v_target, q_current, v_cmd, a_cmd)) {
-        LOG_E("Playback adapter step failed");
+    if (!send_joint_motion_targets(ctrl, q_target, v_target)) {
+        LOG_E("Playback motion command failed");
     }
 
     if ((s_track_log_div++ % 20U) == 0U) {
+        float q_feedback[4] = {
+            g_motors[0].feedback.position,
+            g_motors[1].feedback.position,
+            g_motors[2].feedback.position,
+            g_motors[3].feedback.position
+        };
         LOG_D("Track J1 c=%.3f t=%.3f e=%.3f | J2 c=%.3f t=%.3f e=%.3f | J3 c=%.3f t=%.3f e=%.3f | J4 c=%.3f t=%.3f e=%.3f",
-              q_current[0], q_target[0], q_target[0] - q_current[0],
-              q_current[1], q_target[1], q_target[1] - q_current[1],
-              q_current[2], q_target[2], q_target[2] - q_current[2],
-              q_current[3], q_target[3], q_target[3] - q_current[3]);
+              q_feedback[0], q_target[0], q_target[0] - q_feedback[0],
+              q_feedback[1], q_target[1], q_target[1] - q_feedback[1],
+              q_feedback[2], q_target[2], q_target[2] - q_feedback[2],
+              q_feedback[3], q_target[3], q_target[3] - q_feedback[3]);
     }
     
     /* 处理段边界事件（例如夹爪动作）
@@ -408,35 +507,16 @@ static void playback_control_loop(motion_controller_t *ctrl, float dt) {
     /* 检查序列是否完成 */
     if (seq_done) {
         LOG_I("Playback sequence completed");
-        ctrl->seq_running = false;
-        if (!capture_idle_hold_targets(ctrl)) {
-            ctrl->state = MOTION_STATE_ERROR;
-            LOG_E("Playback completion rejected: capture abs failed");
-            return;
-        }
-        motion_adapter_force_persist_sector(&ctrl->adapter);
-        ctrl->state = MOTION_STATE_IDLE;
+        motion_ctrl_stop(ctrl);
     }
 }
 
 /**
- * @brief IDLE保持模式控制循环（锁当前位置）
+ * @brief IDLE模式控制循环（no-op，不下发周期控制）
  */
 static void idle_control_loop(motion_controller_t *ctrl, float dt) {
-    if (!ctrl->idle_hold_valid) {
-        if (!capture_idle_hold_targets(ctrl)) {
-            ctrl->state = MOTION_STATE_ERROR;
-            LOG_E("Idle control rejected: capture abs failed");
-            return;
-        }
-    }
-
-    float v_target[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-
-    motion_adapter_set_pd(&ctrl->adapter, ctrl->config.controller.kp, ctrl->config.controller.kd);
-    if (!motion_adapter_step(&ctrl->adapter, dt, ctrl->idle_q_hold, v_target, NULL, NULL, NULL)) {
-        LOG_E("Idle adapter step failed");
-    }
+    (void)ctrl;
+    (void)dt;
 }
 
 /**
@@ -509,13 +589,6 @@ void motion_ctrl_set_playback_params(motion_controller_t *ctrl, const float kp[4
 void motion_ctrl_emergency_stop(motion_controller_t *ctrl) {
     if (ctrl == NULL || !ctrl->is_initialized) return;
     ctrl->emergency_stop = true;
-
-    /* 急停：硬停所有电机 */
-    robstride_stop(ROBSTRIDE_MOTOR_ID_JOINT1);
-    robstride_stop(ROBSTRIDE_MOTOR_ID_JOINT2);
-    robstride_stop(ROBSTRIDE_MOTOR_ID_JOINT3);
-    robstride_stop(ROBSTRIDE_MOTOR_ID_JOINT4);
-    robstride_stop(ROBSTRIDE_MOTOR_ID_GRIPPER);
 
     motion_ctrl_stop(ctrl);
     LOG_E("Emergency stop triggered");

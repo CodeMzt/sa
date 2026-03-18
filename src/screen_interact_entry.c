@@ -15,11 +15,13 @@
 #include "lvgl\lvgl.h"
 #include "nvm_manager.h"
 #include "robstride_motor.h"
-#include "motion_ctrl.h"
 #include "drv_canfd.h"
-#include <math.h>
+#include "shared_data.h"
 
 #define RAD2DEG_F 57.2957795130823208768f
+#define LOG_READY_WAIT_SLICE_MS   10U
+#define LOG_READY_WAIT_MAX_MS   1000U
+#define SCREEN_WARMUP_DELAY_MS  1000U
 
 void screen_interact_entry(void *pvParameters) {
     FSP_PARAMETER_NOT_USED(pvParameters);
@@ -30,7 +32,13 @@ void screen_interact_entry(void *pvParameters) {
     return;
 #endif
 
-    vTaskDelay(pdMS_TO_TICKS(3200));
+    uint32_t wait_ms = 0U;
+    while ((!g_log_system_ready) && (wait_ms < LOG_READY_WAIT_MAX_MS)) {
+        vTaskDelay(pdMS_TO_TICKS(LOG_READY_WAIT_SLICE_MS));
+        wait_ms += LOG_READY_WAIT_SLICE_MS;
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(SCREEN_WARMUP_DELAY_MS));
 
     lv_port_init();
     ui_app_init();
@@ -61,17 +69,11 @@ void user_on_teach_save_frame(uint8_t group_idx, uint8_t frame_idx, uint16_t dur
     action_sequence_t *seq = &cfg->groups[group_idx];
     motion_frame_t *frame = &seq->frames[frame_idx];
 
-    float q_abs[4] = {0};
-    if (!motion_adapter_capture_abs(&g_motion_ctrl.adapter, q_abs)) {
-        LOG_E("[TEACH] Save frame rejected: capture abs failed");
-        return;
-    }
-
     /* 保存关节绝对角（单位：deg） */
-    frame->angle_m1    = q_abs[0] * RAD2DEG_F;
-    frame->angle_m2    = q_abs[1] * RAD2DEG_F;
-    frame->angle_m3    = q_abs[2] * RAD2DEG_F;
-    frame->angle_m4    = q_abs[3] * RAD2DEG_F;
+    frame->angle_m1    = g_motors[0].feedback.position * RAD2DEG_F;
+    frame->angle_m2    = g_motors[1].feedback.position * RAD2DEG_F;
+    frame->angle_m3    = g_motors[2].feedback.position * RAD2DEG_F;
+    frame->angle_m4    = g_motors[3].feedback.position * RAD2DEG_F;
     frame->duration_ms = duration_ms;
     frame->action      = (uint8_t)action_type;
 

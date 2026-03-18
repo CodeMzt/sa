@@ -46,6 +46,7 @@ typedef struct {
 
 extern volatile system_status_t g_sys_status;
 extern volatile teach_jog_cmd_t g_teach_jog_cmd;
+extern volatile bool g_log_system_ready;
 
 /* 全局电机数组（由 robstride_motor.c 定义，此处导出） */
 extern robstride_motor_t g_motors[ROBSTRIDE_MOTOR_NUM];

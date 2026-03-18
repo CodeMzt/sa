@@ -1189,7 +1189,8 @@ static void teach_monitor_update_cb(lv_timer_t * timer) {
     /* 从 g_motors 读取数据并更新表格 */
     for (int i = 0; i < 5; i++) {
         /* 位置 */
-        snprintf(buf, sizeof(buf), "%.2f", g_motors[i].feedback.position);
+        float pos = g_motors[i].feedback.position;
+        snprintf(buf, sizeof(buf), "%.2f", pos);
         lv_table_set_cell_value(table, i+1, 1, buf);
 
         /* 速度 */
@@ -1462,13 +1463,10 @@ static void teach_record_angle_update_cb(lv_timer_t * timer) {
     lv_obj_t ** labels = (lv_obj_t **)timer->user_data;
     if (!labels) return;
 
-    float q_abs[4] = {0.0f};
-    bool has_abs = motion_adapter_capture_abs(&g_motion_ctrl.adapter, q_abs);
-
     char buf[16];
     for (int i = 0; i < 4; i++) {
         if (labels[i] && lv_obj_is_valid(labels[i])) {
-            float angle = has_abs ? q_abs[i] : g_motors[i].feedback.position;
+            float angle = g_motors[i].feedback.position;
             snprintf(buf, sizeof(buf), "M%d:%.1f", i+1, angle);
             lv_label_set_text(labels[i], buf);
         }

@@ -32,6 +32,12 @@ const float g_motor_gear_ratio[ROBSTRIDE_MOTOR_NUM] = {
  *  内部辅助函数
  * ============================================================ */
 
+static float clampf_range(float value, float min_value, float max_value) {
+    if (value < min_value) return min_value;
+    if (value > max_value) return max_value;
+    return value;
+}
+
 /**
  * @brief  float 线性映射到 uint16
  *         将 [x_min, x_max] 范围内的 x 映射到 [0, 2^bits - 1]
@@ -78,6 +84,31 @@ static float get_gear_ratio_by_id(uint8_t motor_id) {
     return get_gear_ratio_by_index(motor_index);
 }
 
+uint8_t robstride_get_motor_index(uint8_t motor_id) {
+    return find_motor_index(motor_id);
+}
+
+bool robstride_is_motor_id_valid(uint8_t motor_id) {
+    return robstride_get_motor_index(motor_id) < ROBSTRIDE_MOTOR_NUM;
+}
+
+bool robstride_is_joint_motor_id(uint8_t motor_id) {
+    return (motor_id >= ROBSTRIDE_MOTOR_ID_JOINT1) && (motor_id <= ROBSTRIDE_MOTOR_ID_JOINT4);
+}
+
+float robstride_clamp_position_cmd(uint8_t motor_id, float position_cmd) {
+    if (robstride_is_joint_motor_id(motor_id)) {
+        return clampf_range(position_cmd,
+                            -ROBSTRIDE_JOINT_POSITION_LIMIT_RAD,
+                            ROBSTRIDE_JOINT_POSITION_LIMIT_RAD);
+    }
+
+    float gear_ratio = get_gear_ratio_by_id(motor_id);
+
+    return clampf_range(position_cmd,
+                        ROBSTRIDE_P_MIN / gear_ratio,
+                        ROBSTRIDE_P_MAX / gear_ratio);
+}
 /**
  * @brief  构造 29 位扩展帧 ID
  *         格式：Bit28~24=通信类型, Bit23~8=数据区2(主机ID等), Bit7~0=目标电机ID
@@ -346,16 +377,16 @@ fsp_err_t robstride_set_position_pp(uint8_t motor_id,
 
 /**
  * @brief  速度模式：设置目标速度
- *         按手册顺序：先写 limit_cur（若非0），再写 acc_rad（若非0），最后写 spd_ref
+ *         按手册顺序：先写 limit_cur（若非0），再写 speed_step（若非0），最后写 spd_ref
  */
 fsp_err_t robstride_set_speed(uint8_t motor_id,
                               float   speed_rps,
                               float   limit_cur,
-                              float   acc_rad) {
+                              float   speed_step) {
     fsp_err_t err;
     float gear_ratio = get_gear_ratio_by_id(motor_id);
     float motor_speed_rps = speed_rps * gear_ratio;
-    float motor_acc_rad = acc_rad * gear_ratio;
+    float motor_speed_step = speed_step * gear_ratio;
 
     if (limit_cur > 0.0f) {
         err = robstride_write_param_float(motor_id, ROBSTRIDE_PARAM_LIMIT_CUR, limit_cur);
@@ -363,8 +394,8 @@ fsp_err_t robstride_set_speed(uint8_t motor_id,
     }
 
 
-    if (motor_acc_rad > 0.0f) {
-        err = robstride_write_param_float(motor_id, ROBSTRIDE_PARAM_ACC_RAD, motor_acc_rad);
+    if (motor_speed_step > 0.0f) {
+        err = robstride_write_param_float(motor_id, ROBSTRIDE_PARAM_ACC_RAD, motor_speed_step);
         if (err != FSP_SUCCESS) return 2;
     }
 
@@ -451,8 +482,9 @@ void robstride_parse_feedback(can_frame_t rx_frame) {
     uint16_t torq_raw = ((uint16_t)rx_frame.data[4] << 8) | rx_frame.data[5];
     uint16_t temp_raw = ((uint16_t)rx_frame.data[6] << 8) | rx_frame.data[7];
 
-    /* 线性映射回电机侧物理量，再换算为关节侧 */
-    p_motor->feedback.position    = uint16_to_float(pos_raw,  ROBSTRIDE_P_MIN, ROBSTRIDE_P_MAX) / gear_ratio;
+    /* 线性映射回电机侧物理量，再按减速比换算为关节侧角度 */
+    float raw_motor_position = uint16_to_float(pos_raw, ROBSTRIDE_P_MIN, ROBSTRIDE_P_MAX);
+    p_motor->feedback.position    = raw_motor_position / gear_ratio;
     p_motor->feedback.velocity    = uint16_to_float(vel_raw,  ROBSTRIDE_V_MIN, ROBSTRIDE_V_MAX) / gear_ratio;
     p_motor->feedback.torque      = uint16_to_float(torq_raw, ROBSTRIDE_T_MIN, ROBSTRIDE_T_MAX);
     p_motor->feedback.temperature = (float)temp_raw / 10.0f;  /* 温度 *10 存储 */

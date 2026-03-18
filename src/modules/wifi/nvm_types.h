@@ -81,8 +81,8 @@ typedef struct __attribute__((packed)) {
     uint16_t current_limit[4];
     uint16_t grip_force_max;
 
-    /* 校准 */
-    float    zero_offset[4];    /**< 零点偏移 */
+    /* 校准（legacy保留字段，当前不参与反馈展开持久化） */
+    float    zero_offset[4];
 
     /* Footer */
     uint32_t write_count;       /**< 累计写入次数 */

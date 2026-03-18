@@ -10,7 +10,21 @@
 #include "drv_wifi.h"
 #include "nvm_manager.h"
 #include "shared_data.h"
+#include "robstride_motor.h"
 #include "test_mode.h"
+
+static void reset_teach_jog_cmd_with_stop(void) {
+    uint8_t motor_id = g_teach_jog_cmd.motor_id;
+
+    g_teach_jog_cmd.active = false;
+    g_teach_jog_cmd.motor_id = 0U;
+    g_teach_jog_cmd.vel_centi_rad_s = 0;
+    g_teach_jog_cmd.last_update_tick = 0U;
+
+    if (robstride_is_motor_id_valid(motor_id)) {
+        (void)robstride_stop(motor_id);
+    }
+}
 
 void wifi_debug_entry(void *pvParameters) {
     FSP_PARAMETER_NOT_USED(pvParameters);
@@ -43,26 +57,17 @@ void wifi_debug_entry(void *pvParameters) {
 
         if (should_run && !wifi_running) {
             if (wifi_start_service()) {
-                g_teach_jog_cmd.active = false;
-                g_teach_jog_cmd.motor_id = 0U;
-                g_teach_jog_cmd.vel_centi_rad_s = 0;
-                g_teach_jog_cmd.last_update_tick = 0U;
+                reset_teach_jog_cmd_with_stop();
                 wifi_running = true;
                 g_sys_status.is_wifi_connected = true;
                 LOG_I("WiFi service started for DEBUG mode.");
             } else {
-                g_teach_jog_cmd.active = false;
-                g_teach_jog_cmd.motor_id = 0U;
-                g_teach_jog_cmd.vel_centi_rad_s = 0;
-                g_teach_jog_cmd.last_update_tick = 0U;
+                reset_teach_jog_cmd_with_stop();
                 g_sys_status.is_wifi_connected = false;
                 LOG_E("WiFi service start failed.");
             }
         } else if (!should_run && wifi_running) {
-            g_teach_jog_cmd.active = false;
-            g_teach_jog_cmd.motor_id = 0U;
-            g_teach_jog_cmd.vel_centi_rad_s = 0;
-            g_teach_jog_cmd.last_update_tick = 0U;
+            reset_teach_jog_cmd_with_stop();
             if (!wifi_stop_service()) {
                 LOG_W("WiFi service stop reported warnings.");
             }

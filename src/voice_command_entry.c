@@ -32,6 +32,8 @@ static volatile uint16_t g_fill_pos = 0;
 #define VOTE_FORCEPS        35
 #define VOTE_HEMOSTAT       15
 #define VOTE_SCALPEL        25
+#define LOG_READY_WAIT_SLICE_MS   10U
+#define LOG_READY_WAIT_MAX_MS   1000U
 
 static uint8_t g_vote_history[VOTE_WINDOW_SIZE];
 static uint8_t g_vote_index = 0;
@@ -98,7 +100,12 @@ void voice_command_entry(void *pvParameters) {
     return;
 #endif
 
-    vTaskDelay(pdMS_TO_TICKS(1000));
+    uint32_t wait_ms = 0U;
+    while ((!g_log_system_ready) && (wait_ms < LOG_READY_WAIT_MAX_MS)) {
+        vTaskDelay(pdMS_TO_TICKS(LOG_READY_WAIT_SLICE_MS));
+        wait_ms += LOG_READY_WAIT_SLICE_MS;
+    }
+
     fsp_err_t err = mic_driver_instance.init();
     if (err != FSP_SUCCESS) {
         LOG_E("Mic Init Failed");

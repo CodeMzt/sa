@@ -16,6 +16,7 @@
 #define ROBSTRIDE_MOTOR_H_
 
 #include <stdint.h>
+#include <stdbool.h>
 #include <string.h>
 #include "can_comms.h"
 
@@ -38,6 +39,7 @@
 /* 关节侧与电机侧角度/角速度换算比（关节1~4=20，夹爪=1） */
 #define ROBSTRIDE_GEAR_RATIO_JOINT_DEFAULT   (20.0f)
 #define ROBSTRIDE_GEAR_RATIO_GRIPPER_DEFAULT (1.0f)
+#define ROBSTRIDE_JOINT_POSITION_LIMIT_RAD    (0.6282f)
 
 /* 夹爪默认角度语义：0=闭合，角度增大=张开 */
 #define ROBSTRIDE_GRIPPER_CLOSED_POS_RAD  (0.0f)
@@ -158,6 +160,31 @@ typedef struct {
 
 /* 每个电机的减速比：索引0~3对应关节1~4，索引4对应夹爪 */
 extern const float g_motor_gear_ratio[ROBSTRIDE_MOTOR_NUM];
+
+/**
+ * @brief  获取电机在 g_motors 中的索引
+ * @return 有效索引[0, ROBSTRIDE_MOTOR_NUM-1]；无效返回 ROBSTRIDE_MOTOR_NUM
+ */
+uint8_t robstride_get_motor_index(uint8_t motor_id);
+
+/**
+ * @brief  检查电机 ID 是否有效
+ */
+bool robstride_is_motor_id_valid(uint8_t motor_id);
+
+/**
+ * @brief  检查电机 ID 是否为关节1~4
+ */
+bool robstride_is_joint_motor_id(uint8_t motor_id);
+
+/**
+ * @brief  对发送到 robstride_motion_control 的关节侧位置命令做边界限制
+ * @param  motor_id      目标电机 CAN ID
+ * @param  position_cmd  关节侧位置命令（rad）
+ * @return 边界限制后的关节侧位置命令（rad）
+ * @note   关节1~4固定夹紧到 ±0.6285rad；其他电机按协议窗口与减速比限制
+ */
+float robstride_clamp_position_cmd(uint8_t motor_id, float position_cmd);
 
 /* ============================================================
  *  底层通信函数（直接对应手册通信类型）
@@ -285,14 +312,14 @@ fsp_err_t robstride_set_position_pp(uint8_t motor_id,
  * @param  motor_id   目标电机 CAN ID
  * @param  speed_rps  目标速度 rad/s
  * @param  limit_cur  电流限制 A（0表示使用默认值）
- * @param  acc_rad    加速度 rad/s²（0表示使用默认值）
+ * @param  speed_step 速度步进量 rad/s（无方向，0表示使用默认值）
  * @note   使用前需先调用 robstride_set_run_mode(id, ROBSTRIDE_MODE_SPEED)
  *         并调用 robstride_enable()
  */
 fsp_err_t robstride_set_speed(uint8_t motor_id,
                               float   speed_rps,
                               float   limit_cur,
-                              float   acc_rad);
+                              float   speed_step);
 
 /**
  * @brief  电流模式：设置目标 Iq 电流
