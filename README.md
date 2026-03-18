@@ -158,4 +158,6 @@ The firmware is developed with the **Renesas FSP (Flexible Software Package)** a
 
 ## Author
 
-**Ma Ziteng**
+<a href="https://github.com/Codemzt">
+  <img src="https://github.com/Codemzt.png" width="100px;" alt="用户名"/>
+</a>
