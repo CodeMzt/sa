@@ -1,6 +1,8 @@
 /**
  * @file  log_task_entry.c
  * @brief 日志任务入口（初始化 UART，循环调度日志输出）
+ * @date  2026-02-11
+ * @author Ma Ziteng
  */
 
 #include <log_task.h>

@@ -1108,3 +1108,7 @@ FSP Configuration
     Symbol: audio_semaphore
     Memory Allocation: Static
     
+  Object "g_cfg_save_mutex Binary Semaphore"
+    Symbol: g_cfg_save_mutex
+    Memory Allocation: Static
+    

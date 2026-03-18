@@ -1,8 +1,8 @@
 /**
  * @file    lv_port.h
- * @brief   LVGL 8.3 移植层实现文件
- * @author  Ma Ziteng(参考官方示例)
+ * @brief   LVGL 8.3 移植层头文件（初始化接口）
  * @date    2026-01-27
+ * @author  Ma Ziteng
  */
 
 #ifndef LV_PORT_H_

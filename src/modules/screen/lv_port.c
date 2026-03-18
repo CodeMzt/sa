@@ -1,8 +1,8 @@
 /**
  * @file    lv_port.c
- * @brief   LVGL 8.3 移植层实现文件
- * @author  Ma Ziteng(参考官方示例)
+ * @brief   LVGL 8.3 移植层实现文件（显示与触摸驱动对接）
  * @date    2026-01-27
+ * @author  Ma Ziteng
  */
 
 #include "lv_port.h"
@@ -45,9 +45,7 @@ void lv_port_init(void)
     lcd_spi_init();
 
     touch_dev_t * tp = touch_dev_get();
-    if (tp && tp->init) {
-        tp->init(tp);
-    }
+    if (tp && tp->init) tp->init(tp);
 
     static lv_disp_draw_buf_t draw_buf;
     lv_disp_draw_buf_init(&draw_buf, g_disp_buf_1, g_disp_buf_2, DISP_BUF_SIZE);
@@ -100,9 +98,7 @@ static void touchpad_read_cb(lv_indev_drv_t * indev_drv, lv_indev_data_t * data)
     (void)indev_drv;
 
     touch_dev_t * tp = touch_dev_get();
-    if (tp == NULL || tp->read == NULL) {
-        return;
-    }
+    if (tp == NULL || tp->read == NULL) return;
 
     touch_monitor_t touch_data;
     bool is_valid = tp->read(tp, &touch_data);
@@ -111,7 +107,5 @@ static void touchpad_read_cb(lv_indev_drv_t * indev_drv, lv_indev_data_t * data)
         data->state = LV_INDEV_STATE_PR;
         data->point.x = touch_data.points[0].x;
         data->point.y = touch_data.points[0].y;
-    } else {
-        data->state = LV_INDEV_STATE_REL;
-    }
+    } else data->state = LV_INDEV_STATE_REL;
 }

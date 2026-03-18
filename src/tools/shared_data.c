@@ -1,8 +1,8 @@
-/*
- * shared_data.c
- *
- *  Created on: 2026年2月21日
- *      Author: Ma Ziteng
+/**
+ * @file    shared_data.c
+ * @brief   全局共享数据管理（系统状态、器械队列操作）
+ * @date    2026-02-21
+ * @author  Ma Ziteng
  */
 
 #include "shared_data.h"
@@ -24,17 +24,21 @@ volatile system_status_t g_sys_status = {
     .act_queue_count = 0
 };
 
+volatile teach_jog_cmd_t g_teach_jog_cmd = {
+    .active = false,
+    .motor_id = 0U,
+    .vel_centi_rad_s = 0,
+    .last_update_tick = 0U,
+};
+
 /**
  * @brief 检查器械是否在队列中
  * @param inst 器械类型
  * @return true 表示在队列中
  */
 bool is_instrument_in_queue(instrument_t inst) {
-    for (uint8_t i = 0; i < g_sys_status.act_queue_count; i++) {
-        if (g_sys_status.act_queue[i] == inst) {
-            return true;
-        }
-    }
+    for (uint8_t i = 0; i < g_sys_status.act_queue_count; i++)
+        if (g_sys_status.act_queue[i] == inst) return true;
     return false;
 }
 
@@ -44,17 +48,9 @@ bool is_instrument_in_queue(instrument_t inst) {
  * @return true 表示添加成功
  */
 bool add_instrument_to_queue(instrument_t inst) {
-    if (inst == INSTRUMENT_NONE) {
-        return false;
-    }
-
-    if (g_sys_status.act_queue_count >= 3) {
-        return false;
-    }
-
-    if (is_instrument_in_queue(inst)) {
-        return false;
-    }
+    if (inst == INSTRUMENT_NONE) return false;
+    if (g_sys_status.act_queue_count >= 3) return false;
+    if (is_instrument_in_queue(inst)) return false;
 
     g_sys_status.act_queue[g_sys_status.act_queue_count] = inst;
     g_sys_status.act_queue_count++;
@@ -66,9 +62,7 @@ bool add_instrument_to_queue(instrument_t inst) {
  * @param index 队列索引
  */
 void remove_instrument_from_queue(uint8_t index) {
-    if (index >= g_sys_status.act_queue_count) {
-        return;
-    }
+    if (index >= g_sys_status.act_queue_count) return;
 
     for (uint8_t i = index; i < g_sys_status.act_queue_count - 1; i++) {
         g_sys_status.act_queue[i] = g_sys_status.act_queue[i + 1];
@@ -113,11 +107,8 @@ void update_queue_display_string(void) {
         pos += snprintf(buf + pos, sizeof(buf) - pos, "Queue: ");
 
         for (uint8_t i = 0; i < g_sys_status.act_queue_count; i++) {
-            if (i == 0) {
-                pos += snprintf(buf + pos, sizeof(buf) - pos, "[%s]", get_instrument_name(g_sys_status.act_queue[i]));
-            } else {
-                pos += snprintf(buf + pos, sizeof(buf) - pos, " -> %s", get_instrument_name(g_sys_status.act_queue[i]));
-            }
+            if (i == 0) pos += snprintf(buf + pos, sizeof(buf) - pos, "[%s]", get_instrument_name(g_sys_status.act_queue[i]));
+            else pos += snprintf(buf + pos, sizeof(buf) - pos, " -> %s", get_instrument_name(g_sys_status.act_queue[i]));
         }
 
         strncpy(g_sys_status.queue_list, buf, sizeof(g_sys_status.queue_list));

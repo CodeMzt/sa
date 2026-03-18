@@ -1,21 +1,37 @@
-/*
- * surgideliver_arm_canfd.h
- *
- *  Created on: 2026年1月23日
- *      Author: Ma Ziteng
- *
- *  CAN FD 驱动层（扩展帧，1Mbps）
- *  适配 RobStride EL05 私有协议（29位扩展帧ID）
+/**
+ * @file drv_canfd.h
+ * @brief CAN FD 驱动头文件（扩展帧，1Mbps）
+ * @date 2026-01-23
+ * @author Ma Ziteng
  */
 
 #ifndef SURGIDELIVER_ARM_CANFD_H_
 #define SURGIDELIVER_ARM_CANFD_H_
 
+#include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
 #include "can_comms.h"
 
-extern volatile uint16_t count_can;
+extern volatile uint16_t g_can_rx_count;
+
+/* 力传感器接收帧：扩展帧 + 8字节原始数据 */
+#define CANFD_FORCE_SENSOR_CMD_DATA   (0x1AU)
+#define CANFD_FORCE_SENSOR_CAN_ID     (0x10U)
+#define CANFD_FORCE_SENSOR_HOST_ID    (0xFDU)
+#define CANFD_FORCE_SENSOR_DATA_LEN   (8U)
+
+typedef struct {
+	uint8_t  sensor_can_id;
+	uint8_t  host_can_id;
+	uint8_t  sub_type;
+	uint8_t  values[CANFD_FORCE_SENSOR_DATA_LEN];
+	bool     valid;
+	uint32_t rx_count;
+	uint32_t last_update_tick;
+} canfd_force_sensor_data_t;
+
+extern volatile canfd_force_sensor_data_t g_force_sensor_data;
 
 /**
  * @brief  初始化 CANFD0 外设，切换到正常工作模式

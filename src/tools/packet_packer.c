@@ -1,8 +1,8 @@
-/*
- * packet_packer.c
- *
- *  Created on: 2026年1月25日
- *      Author: Ma Ziteng
+/**
+ * @file    packet_packer.c
+ * @brief   数据包打包工具实现（将电机反馈数据序列化为二进制包）
+ * @date    2026-01-25
+ * @author  Ma Ziteng
  */
 
 #include "packet_packer.h"

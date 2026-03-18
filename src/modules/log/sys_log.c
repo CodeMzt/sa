@@ -37,9 +37,9 @@ void sys_log_init(uart_instance_t uart) {
  * @param fmt   格式化字符串
  */
 void log_print(log_level_t level, const char *fmt, ...) {
-        if (level < g_level || g_log_queue == NULL) return;
+    if (level < g_level || g_log_queue == NULL) return;
 
-        if (xSemaphoreTake(g_log_mutex, portMAX_DELAY) == pdTRUE) {
+    if (xSemaphoreTake(g_log_mutex, portMAX_DELAY) == pdTRUE) {
         static const char *tag[] = {"DBG", "INF", "WRN", "ERR"};
         log_msg_t msg = {{0}};
         va_list args;

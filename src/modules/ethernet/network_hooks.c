@@ -1,8 +1,8 @@
-/*
- * network_hooks.c
- *
- *  Created on: 2026年1月24日
- *      Author: Ma Ziteng
+/**
+ * @file network_hooks.c
+ * @brief FreeRTOS-IP 网络协议栈钩子函数实现
+ * @date 2026-01-24
+ * @author Ma Ziteng
  */
 
 #include "FreeRTOS_IP.h"
@@ -13,10 +13,8 @@
  * @brief 网络事件钩子函数
  * @param e_network_event 事件类型
  */
-void vApplicationIPNetworkEventHook(eIPCallbackEvent_t e_network_event)
-{
-    if (e_network_event == eNetworkUp)
-    {
+void vApplicationIPNetworkEventHook(eIPCallbackEvent_t e_network_event) {
+    if (e_network_event == eNetworkUp) {
     } else if (e_network_event == eNetworkDown) {
     }
 }
@@ -50,8 +48,7 @@ uint32_t ulApplicationGetNextSequenceNumber(uint32_t ul_source_ip,
  * @param pul_number 随机数输出指针
  * @return pdTRUE 表示成功
  */
-BaseType_t xApplicationGetRandomNumber(uint32_t * pul_number)
-{
+BaseType_t xApplicationGetRandomNumber(uint32_t *pul_number) {
     *pul_number = 0x55AA1234;
     g_sce_protected_on_sce.randomNumberGenerate(pul_number);
     return pdTRUE;

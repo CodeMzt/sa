@@ -10,6 +10,8 @@
 #include "nvm_manager.h"
 #include "nvm_config.h"
 #include "sys_log.h"
+#include "shared_data.h"
+#include "robstride_motor.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -34,17 +36,21 @@
 #define WIFI_AP_GW2       10U
 #define WIFI_AP_GW3       1U
 
+/* teach_jog 速度范围：0.05~0.50 rad/s（centi-rad/s: 5~50） */
+#define TEACH_JOG_ABS_VEL_MIN_CENTI 5
+#define TEACH_JOG_ABS_VEL_MAX_CENTI 50
+
 /* ---- 静态缓冲 ---- */
 static volatile char     rx_buf[RX_BUF_SIZE];
 static volatile uint16_t rx_idx;
-static volatile uint8_t  rx_state;          /**< 2 = 收到完整 \\r\\n 帧 */
+static volatile uint8_t  rx_state;          /**< 2 = 收到完整 \r\n 帧 */
 static volatile uint32_t isr_rx_count;
 static volatile bool     tx_done = true;
 
 static char  tx_buf[TX_BUF_SIZE];
 static char  line[RX_BUF_SIZE];             /**< static 避免爆栈 */
 static int   active_sock = -1;
-static bool  wifi_service_started = false;
+static bool  wifi_active = false;
 
 /* ---- 前置声明 ---- */
 static bool        send_at(const char *cmd, const char *expect, uint32_t ms);
@@ -79,8 +85,7 @@ void wifi_uart_callback(uart_callback_args_t *p_args) {
         if (rx_idx >= RX_BUF_SIZE - 1) rx_idx = 0;
         rx_buf[rx_idx++] = c;
         rx_buf[rx_idx]   = '\0';
-        if (rx_idx >= 2 && rx_buf[rx_idx - 2] == '\r' && rx_buf[rx_idx - 1] == '\n')
-            rx_state = 2;
+        if (rx_idx >= 2 && rx_buf[rx_idx - 2] == '\r' && rx_buf[rx_idx - 1] == '\n') rx_state = 2;
     }
     if (p_args->event == UART_EVENT_TX_COMPLETE) tx_done = true;
 }
@@ -101,8 +106,7 @@ static void clear_rx(void) {
  * @param ms 超时时间（毫秒）
  */
 static void wait_tx(uint32_t ms) {
-    for (uint32_t t = 0; !tx_done && t < ms; t++)
-        vTaskDelay(pdMS_TO_TICKS(1));
+    for (uint32_t t = 0; !tx_done && t < ms; t++) vTaskDelay(pdMS_TO_TICKS(1));
 }
 
 /**
@@ -134,13 +138,9 @@ static bool send_at(const char *cmd, const char *expect, uint32_t ms) {
 bool wifi_link_check(void) { return send_at("AT+\r\n", "+OK", 500); }
 
 bool wifi_start_service(void) {
-    if (wifi_service_started) {
-        return true;
-    }
+    if (wifi_active) return true;
 
-    if (!wifi_init_ap_server()) {
-        return false;
-    }
+    if (!wifi_init_ap_server()) return false;
 
     R_BSP_IrqEnable(g_uart_wifi_cfg.rxi_irq);
     R_BSP_IrqEnable(g_uart_wifi_cfg.txi_irq);
@@ -148,14 +148,14 @@ bool wifi_start_service(void) {
     R_BSP_IrqEnable(g_uart_wifi_cfg.eri_irq);
 
     wifi_reset_debug_session();
-    wifi_service_started = true;
+    wifi_active = true;
     return true;
 }
 
 bool wifi_stop_service(void) {
     bool ok = true;
 
-    if (wifi_service_started) {
+    if (wifi_active) {
         (void)send_at("AT+SKCLS=0\r\n", NULL, 0);
         vTaskDelay(pdMS_TO_TICKS(30));
         ok &= send_at("AT+SKRPTM=0\r\n", "+OK", 1000);
@@ -173,7 +173,7 @@ bool wifi_stop_service(void) {
     rx_buf[0] = '\0';
     rx_state = 0;
     active_sock = -1;
-    wifi_service_started = false;
+    wifi_active = false;
     return ok;
 }
 
@@ -226,9 +226,7 @@ uint8_t wifi_init_ap_server(void) {
         (void)g_uart_wifi.p_api->close(g_uart_wifi.p_ctrl);
         vTaskDelay(pdMS_TO_TICKS(10));
         open_err = g_uart_wifi.p_api->open(g_uart_wifi.p_ctrl, g_uart_wifi.p_cfg);
-        if (open_err != FSP_SUCCESS) {
-            return false;
-        }
+        if (open_err != FSP_SUCCESS) return false;
     }
     LOG_D("WIFI UART opened.");
 
@@ -249,15 +247,12 @@ uint8_t wifi_init_ap_server(void) {
     ok &= send_at("AT+SKRPTM=1\r\n",        "+OK", 1000);
     ok &= send_at(cmd_skct, "+OK", 2000);
     clear_rx();
-    if (!ok) {
-        (void)g_uart_wifi.p_api->close(g_uart_wifi.p_ctrl);
-    }
+    if (!ok) (void)g_uart_wifi.p_api->close(g_uart_wifi.p_ctrl);
     return ok;
 }
 
 /**
  * @brief 轮询处理 W800 上报的 +SKTRPT 并分发 JSON 命令
- *
  * W800 格式: +SKTRPT=<sock>,<dlen>,<ip>,<port>\r\n\r\n<json>\r\n
  */
 void wifi_process_commands(void) {
@@ -453,6 +448,40 @@ static void handle_json(const char *js) {
         send_json(nvm_save_motion_config(&cfg) == FSP_SUCCESS
             ? "{\"type\":\"ack\",\"cmd\":\"write_motion_cfg\",\"ok\":true}"
             : "{\"type\":\"error\",\"cmd\":\"write_motion_cfg\",\"msg\":\"save_failed\"}");
+        return;
+    }
+
+    if (match_cmd(js, "teach_jog")) {
+        uint32_t motor_id_u32 = 0U;
+        int16_t vel_centi = 0;
+
+        if (!parse_uint(js, "motor_id", &motor_id_u32)) {
+            send_error("teach_jog", "missing_motor_id");
+            return;
+        }
+        if (!parse_decimal_i16(js, "vel", &vel_centi)) {
+            send_error("teach_jog", "missing_vel");
+            return;
+        }
+
+        if (motor_id_u32 < ROBSTRIDE_MOTOR_ID_JOINT1 || motor_id_u32 > ROBSTRIDE_MOTOR_ID_GRIPPER) {
+            send_error("teach_jog", "invalid_motor_id");
+            return;
+        }
+
+        if (vel_centi != 0) {
+            int32_t abs_vel_centi = (vel_centi < 0) ? (-(int32_t)vel_centi) : (int32_t)vel_centi;
+            if (abs_vel_centi < TEACH_JOG_ABS_VEL_MIN_CENTI ||
+                abs_vel_centi > TEACH_JOG_ABS_VEL_MAX_CENTI) {
+                send_error("teach_jog", "invalid_vel");
+                return;
+            }
+        }
+
+        g_teach_jog_cmd.motor_id = (uint8_t)motor_id_u32;
+        g_teach_jog_cmd.vel_centi_rad_s = vel_centi;
+        g_teach_jog_cmd.last_update_tick = (uint32_t)xTaskGetTickCount();
+        g_teach_jog_cmd.active = (vel_centi != 0);
         return;
     }
 
@@ -653,14 +682,10 @@ static bool parse_decimal_i16(const char *js, const char *key, int16_t *val) {
         }
     }
     while (*p >= '0' && *p <= '9') p++;
-    if (frac_digits == 1) {
-        frac *= 10;
-    }
+    if (frac_digits == 1) frac *= 10;
     v = v * 100 + frac;
     int32_t scaled = sign * v;
-    if (scaled < INT16_MIN || scaled > INT16_MAX) {
-        return false;
-    }
+    if (scaled < INT16_MIN || scaled > INT16_MAX) return false;
     *val = (int16_t)scaled;
     return true;
 }
@@ -695,13 +720,9 @@ static bool parse_decimal_u16(const char *js, const char *key, uint16_t *val) {
         }
     }
     while (*p >= '0' && *p <= '9') p++;
-    if (frac_digits == 1) {
-        frac *= 10;
-    }
+    if (frac_digits == 1) frac *= 10;
     v = v * 100 + frac;
-    if (v < 0 || v > UINT16_MAX) {
-        return false;
-    }
+    if (v < 0 || v > UINT16_MAX) return false;
     *val = (uint16_t)v;
     return true;
 }
@@ -726,7 +747,7 @@ static bool parse_decimal_i16_array(const char *js, const char *key, int16_t *ar
         if (*p == '\0' || *p == ']') return false;
         int sign = 1;
         if (*p == '-') { sign = -1; p++; }
-        else if (*p == '+') { p++; }
+        else if (*p == '+') p++;
         int32_t v = 0;
         while (*p >= '0' && *p <= '9') { v = v * 10 + (*p - '0'); p++; }
         int32_t frac = 0;
@@ -740,14 +761,10 @@ static bool parse_decimal_i16_array(const char *js, const char *key, int16_t *ar
             }
         }
         while (*p >= '0' && *p <= '9') p++;
-        if (frac_digits == 1) {
-            frac *= 10;
-        }
+        if (frac_digits == 1) frac *= 10;
         v = v * 100 + frac;
         int32_t scaled = sign * v;
-        if (scaled < INT16_MIN || scaled > INT16_MAX) {
-            return false;
-        }
+        if (scaled < INT16_MIN || scaled > INT16_MAX) return false;
         arr[i] = (int16_t)scaled;
         p++;
         while (*p == ' ' || *p == ',') p++;
@@ -786,13 +803,9 @@ static bool parse_decimal_u16_array(const char *js, const char *key, uint16_t *a
             }
         }
         while (*p >= '0' && *p <= '9') p++;
-        if (frac_digits == 1) {
-            frac *= 10;
-        }
+        if (frac_digits == 1) frac *= 10;
         v = v * 100 + frac;
-        if (v < 0 || v > UINT16_MAX) {
-            return false;
-        }
+        if (v < 0 || v > UINT16_MAX) return false;
         arr[i] = (uint16_t)v;
         p++;
         while (*p == ' ' || *p == ',') p++;

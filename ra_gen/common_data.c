@@ -124,6 +124,11 @@ SemaphoreHandle_t audio_semaphore;
 StaticSemaphore_t audio_semaphore_memory;
 #endif
 void rtos_startup_err_callback(void *p_instance, void *p_data);
+SemaphoreHandle_t g_cfg_save_mutex;
+#if 1
+StaticSemaphore_t g_cfg_save_mutex_memory;
+#endif
+void rtos_startup_err_callback(void *p_instance, void *p_data);
 void g_common_init(void)
 {
     g_log_queue =
@@ -180,5 +185,15 @@ void g_common_init(void)
     if (NULL == audio_semaphore)
     {
         rtos_startup_err_callback (audio_semaphore, 0);
+    }
+    g_cfg_save_mutex =
+#if 1
+            xSemaphoreCreateBinaryStatic (&g_cfg_save_mutex_memory);
+#else
+                xSemaphoreCreateBinary();
+                #endif
+    if (NULL == g_cfg_save_mutex)
+    {
+        rtos_startup_err_callback (g_cfg_save_mutex, 0);
     }
 }

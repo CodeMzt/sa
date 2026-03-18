@@ -18,11 +18,8 @@ static void eval_cubic_poly(float t, float a, float b, float c, float d,
 /**
  * @brief 重置轨迹控制器
  */
-void traj_reset(traj_controller_t *traj)
-{
-    if (traj == NULL) {
-        return;
-    }
+void traj_reset(traj_controller_t *traj) {
+    if (traj == NULL) return;
     
     memset(traj, 0, sizeof(traj_controller_t));
     traj->state = TRAJ_IDLE;
@@ -32,9 +29,7 @@ void traj_reset(traj_controller_t *traj)
  * @brief 从动作序列初始化轨迹
  */
 bool traj_init_from_sequence(traj_controller_t *traj, const action_sequence_t *seq) {
-    if (traj == NULL || seq == NULL || seq->frame_count < 2 || seq->frame_count > MAX_FRAMES_PER_SEQ) {
-        return false;
-    }
+    if (traj == NULL || seq == NULL || seq->frame_count < 2 || seq->frame_count > MAX_FRAMES_PER_SEQ) return false;
     
     /* 重置控制器 */
     traj_reset(traj);
@@ -119,9 +114,7 @@ bool traj_init_from_sequence(traj_controller_t *traj, const action_sequence_t *s
  */
 static bool compute_natural_cubic_spline(const float x[], const float y[], uint8_t n,
                                          float a[], float b[], float c[], float d[]) {
-    if (n < 2) {
-        return false;
-    }
+    if (n < 2) return false;
 
     uint8_t point_count = n;
     uint8_t segment_count = point_count - 1U;
@@ -130,16 +123,12 @@ static bool compute_natural_cubic_spline(const float x[], const float y[], uint8
     float h[MAX_FRAMES_PER_SEQ - 1] = {0};
     for (uint8_t i = 0; i < segment_count; i++) {
         h[i] = x[i+1] - x[i];
-        if (h[i] <= 0.0f) {
-            return false;  /* 时间必须递增 */
-        }
+        if (h[i] <= 0.0f) return false;  /* 时间必须递增 */
     }
     
     /* 计算alpha数组 */
     float alpha[MAX_FRAMES_PER_SEQ] = {0};
-    for (uint8_t i = 1; i < segment_count; i++) {
-        alpha[i] = 3.0f/h[i] * (y[i+1] - y[i]) - 3.0f/h[i-1] * (y[i] - y[i-1]);
-    }
+    for (uint8_t i = 1; i < segment_count; i++) alpha[i] = 3.0f/h[i] * (y[i+1] - y[i]) - 3.0f/h[i-1] * (y[i] - y[i-1]);
     
     /* 三对角矩阵：l, mu, z 数组 */
     float l[MAX_FRAMES_PER_SEQ] = {0};
@@ -154,9 +143,7 @@ static bool compute_natural_cubic_spline(const float x[], const float y[], uint8
     /* 前向消元 */
     for (uint8_t i = 1; i < segment_count; i++) {
         l[i] = 2.0f * (x[i+1] - x[i-1]) - h[i-1] * mu[i-1];
-        if (fabsf(l[i]) < 1e-6f) {
-            return false;  /* 奇异矩阵 */
-        }
+        if (fabsf(l[i]) < 1e-6f) return false;  /* 奇异矩阵 */
         mu[i] = h[i] / l[i];
         z[i] = (alpha[i] - h[i-1] * z[i-1]) / l[i];
     }
@@ -167,9 +154,7 @@ static bool compute_natural_cubic_spline(const float x[], const float y[], uint8
     float c_spline[MAX_FRAMES_PER_SEQ] = {0};
     
     /* 后向代入计算c系数 */
-    for (int8_t i = (int8_t)segment_count - 1; i >= 0; i--) {
-        c_spline[i] = z[i] - mu[i] * c_spline[i+1];
-    }
+    for (int8_t i = (int8_t)segment_count - 1; i >= 0; i--) c_spline[i] = z[i] - mu[i] * c_spline[i+1];
     
     /* 计算a,b,d系数 */
     for (uint8_t i = 0; i < segment_count; i++) {

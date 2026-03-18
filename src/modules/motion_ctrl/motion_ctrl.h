@@ -4,10 +4,11 @@
  * @date 2026-02-27
  * @author Ma Ziteng
  * 
- * 运控模式下的机械臂示教/回放控制
- * 支持两种运行状态：
- * 1. 示教拖动模式（零力拖动）：抵消重力+阻尼，手推能动，松手能停
- * 2. 回放模式（轨迹跟踪）：自然三次样条轨迹跟踪
+ * 运控主状态机下的机械臂示教/空闲/回放控制
+ * 三种模式共用同一套控制器参数，仅目标生成行为不同：
+ * 1. 示教模式：按当前姿态随动（速度目标为0）
+ * 2. 空闲模式：保持进入空闲时姿态（速度目标为0）
+ * 3. 回放模式：按轨迹目标执行动作
  */
 
 #ifndef MOTION_CTRL_H_
@@ -18,6 +19,7 @@
 #include "robstride_motor.h"
 #include "gravity_comp.h"
 #include "trajectory.h"
+#include "motion_adapter.h"
 
 /* 控制器配置参数 */
 #define TEACH_MODE_LOOP_FREQ_HZ      100.0f   /* 示教模式控制频率 100Hz */
@@ -35,27 +37,13 @@ typedef enum {
     MOTION_STATE_ERROR          /* 错误状态 */
 } motion_state_t;
 
-/* 控制器模式配置 */
+/* 控制器配置 */
 typedef struct {
-    /* 示教模式参数 */
+    /* 三种模式共用控制器参数 */
     struct {
-        float kp[4];            /* 位置刚度（通常为0） */
-        float kd[4];            /* 阻尼系数（0.2~1.0） */
-        bool enable_joint1;     /* 是否启用关节1的零力拖动 */
-        float joint1_kd;        /* 关节1的阻尼系数 */
-    } teach;
-    
-    /* 回放模式参数 */
-    struct {
-        float kp[4];            /* 位置刚度（可配，不同关节可不同） */
+        float kp[4];            /* 位置刚度 */
         float kd[4];            /* 阻尼系数 */
-    } playback;
-
-    /* IDLE保持模式参数 */
-    struct {
-        float kp[4];            /* 保持模式位置刚度（高） */
-        float kd[4];            /* 保持模式阻尼（高） */
-    } idle;
+    } controller;
     
     /* 重力补偿参数 */
     grav_param_t grav_params;   /* 重力补偿参数 */
@@ -69,6 +57,7 @@ typedef struct {
 typedef struct {
     motion_state_t state;       /* 当前运行状态 */
     motion_ctrl_config_t config;     /* 当前配置 */
+    motion_adapter_t adapter;   /* 角度展开与下发适配层 */
     
     /* 轨迹跟踪相关 */
     traj_controller_t trajectory;  /* 轨迹控制器实例 */
@@ -95,15 +84,15 @@ extern motion_controller_t g_motion_ctrl;
  * @param ctrl 控制器实例指针
  * @param config 配置参数（可为NULL使用默认配置）
  * @return true 成功，false 失败
- * @note 必须在使用前调用，初始化关节模式为运控模式
+ * @note 必须在使用前调用，控制输出由适配层统一下发
  */
 bool motion_ctrl_init(motion_controller_t *ctrl, const motion_ctrl_config_t *config);
 
 /**
- * @brief 设置运控模式（从CSP模式切换到运控模式）
+ * @brief 设置控制模式（从CSP模式切换到速度模式）
  * @param ctrl 控制器实例指针
  * @return true 成功，false 失败
- * @note 将关节1~4从CSP模式切换到运控模式
+ * @note 将关节1~4从CSP模式切换到速度模式
  */
 bool motion_ctrl_set_motion_mode(motion_controller_t *ctrl);
 
@@ -154,9 +143,10 @@ void motion_ctrl_set_grav_params(motion_controller_t *ctrl, const grav_param_t *
 /**
  * @brief 设置示教模式参数
  * @param ctrl 控制器实例指针
- * @param kp 位置刚度数组（长度4，通常为0）
+ * @param kp 位置刚度数组（长度4）
  * @param kd 阻尼系数数组（长度4）
- * @param enable_joint1 是否启用关节1的零力拖动
+ * @param enable_joint1 兼容保留参数，不再生效
+ * @note 本接口会更新三种模式共用的控制器参数
  */
 void motion_ctrl_set_teach_params(motion_controller_t *ctrl, const float kp[4], 
                                   const float kd[4], bool enable_joint1);
@@ -166,6 +156,7 @@ void motion_ctrl_set_teach_params(motion_controller_t *ctrl, const float kp[4],
  * @param ctrl 控制器实例指针
  * @param kp 位置刚度数组（长度4）
  * @param kd 阻尼系数数组（长度4）
+ * @note 本接口会更新三种模式共用的控制器参数
  */
 void motion_ctrl_set_playback_params(motion_controller_t *ctrl, const float kp[4], 
                                      const float kd[4]);

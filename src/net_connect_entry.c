@@ -1,3 +1,10 @@
+/**
+ * @file  net_connect_entry.c
+ * @brief 以太网连接任务入口（初始化以太网 + NVM，循环发送 UDP 数据包）
+ * @date  2026-02-11
+ * @author Ma Ziteng
+ */
+
 #include <net_connect.h>
 #include "packet_packer.h"
 #include "sys_log.h"
@@ -6,7 +13,7 @@
 #include "nvm_manager.h"
 #include <string.h>
 
-static const uint8_t uc_dns_server_address[4] = { 8, 8, 8, 8 };
+static const uint8_t dns_server_addr[4] = { 8, 8, 8, 8 };
 
 extern uint8_t  g_ether0_mac_address[6];
 static struct freertos_sockaddr server_addr;
@@ -18,12 +25,8 @@ static bool is_valid_mac(const uint8_t mac[6]) {
     bool all_zero = true;
     bool all_ff = true;
     for (int i = 0; i < 6; i++) {
-        if (mac[i] != 0U) {
-            all_zero = false;
-        }
-        if (mac[i] != 0xFFU) {
-            all_ff = false;
-        }
+        if (mac[i] != 0U) all_zero = false;
+        if (mac[i] != 0xFFU) all_ff = false;
     }
     return !(all_zero || all_ff);
 }
@@ -44,9 +47,7 @@ void net_connect_entry(void *pvParameters) {
     if (nvm_err != FSP_SUCCESS) {
         LOG_E("NVM init failed in net task: %d", nvm_err);
         g_sys_status.is_eth_connected = false;
-        while (1) {
-            vTaskDelay(pdMS_TO_TICKS(1000));
-        }
+        while (1) vTaskDelay(pdMS_TO_TICKS(1000));
     }
 
     const sys_config_t *cfg = nvm_get_sys_config();
@@ -58,9 +59,7 @@ void net_connect_entry(void *pvParameters) {
           cfg->server_ip[0], cfg->server_ip[1], cfg->server_ip[2], cfg->server_ip[3],
           cfg->server_port);
 
-    if(net_connect_init()!=pdTRUE) {
-        LOG_E("Failed to start the Ethernet.");
-    }
+    if (net_connect_init() != pdTRUE) LOG_E("Failed to start the Ethernet.");
 
     server_addr.sin_family = FREERTOS_AF_INET;
     server_addr.sin_port = FreeRTOS_htons(cfg->server_port);
@@ -125,10 +124,10 @@ static BaseType_t net_connect_init(void){
     }
 
     fsp_err_t err = g_sce_protected_on_sce.open(&sce_ctrl,&sce_cfg);
-    if(err != FSP_SUCCESS) return pdFALSE;
+    if (err != FSP_SUCCESS) return pdFALSE;
 
     BaseType_t connect_status = FreeRTOS_IPInit(ip_addr, net_mask, gateway,
-                    uc_dns_server_address, mac_addr);
+                    dns_server_addr, mac_addr);
 
     return connect_status;
 }

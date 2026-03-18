@@ -1,5 +1,11 @@
-#include "screen_interact.h"
+/**
+ * @file  screen_interact_entry.c
+ * @brief 屏幕交互任务入口（初始化 LVGL + UI，循环处理 UI 事件与状态更新）
+ * @date  2026-02-11
+ * @author Ma Ziteng
+ */
 
+#include "screen_interact.h"
 #include "drv_i2c_touchpad.h"
 #include "drv_spi_display.h"
 #include "sys_log.h"
@@ -9,6 +15,7 @@
 #include "lvgl\lvgl.h"
 #include "nvm_manager.h"
 #include "robstride_motor.h"
+#include "motion_ctrl.h"
 #include "drv_canfd.h"
 #include <math.h>
 
@@ -38,31 +45,38 @@ void screen_interact_entry(void *pvParameters) {
 
 
 /**
- * @brief 示教保存帧实现（覆盖 weak）
- * 将当前电机位置和参数保存到 motion_config 的 RAM 镜像
+ * @brief 示教保存帧实现
+ * @param group_idx 组索引
+ * @param frame_idx 帧索引
+ * @param duration_ms 持续时间
+ * @param action_type 动作类型
  */
-void user_on_teach_save_frame(uint8_t group_idx, uint8_t frame_idx, uint16_t duration_ms, uint8_t action_type){
-    motion_config_t * cfg = (motion_config_t *)nvm_get_motion_config();
+void user_on_teach_save_frame(uint8_t group_idx, uint8_t frame_idx, uint16_t duration_ms, uint8_t action_type) {
+    motion_config_t *cfg = (motion_config_t *)nvm_get_motion_config();
     if (!cfg || group_idx >= TOTAL_ACTION_GROUPS || frame_idx >= TEACH_FRAMES_PER_GROUP) {
         LOG_W("[TEACH] Invalid frame params: group=%d, frame=%d", group_idx, frame_idx);
         return;
     }
 
-    action_sequence_t * seq = &cfg->groups[group_idx];
-    motion_frame_t * frame = &seq->frames[frame_idx];
+    action_sequence_t *seq = &cfg->groups[group_idx];
+    motion_frame_t *frame = &seq->frames[frame_idx];
 
-    /* 保存电机位置 */
-    frame->angle_m1    = g_motors[0].feedback.position * RAD2DEG_F;
-    frame->angle_m2    = g_motors[1].feedback.position * RAD2DEG_F;
-    frame->angle_m3    = g_motors[2].feedback.position * RAD2DEG_F;
-    frame->angle_m4    = g_motors[3].feedback.position * RAD2DEG_F;
+    float q_abs[4] = {0};
+    if (!motion_adapter_capture_abs(&g_motion_ctrl.adapter, q_abs)) {
+        LOG_E("[TEACH] Save frame rejected: capture abs failed");
+        return;
+    }
+
+    /* 保存关节绝对角（单位：deg） */
+    frame->angle_m1    = q_abs[0] * RAD2DEG_F;
+    frame->angle_m2    = q_abs[1] * RAD2DEG_F;
+    frame->angle_m3    = q_abs[2] * RAD2DEG_F;
+    frame->angle_m4    = q_abs[3] * RAD2DEG_F;
     frame->duration_ms = duration_ms;
     frame->action      = (uint8_t)action_type;
 
-    /* 更新帧计数（确保覆盖到当前帧） */
-    if (frame_idx + 1 > seq->frame_count) {
-        seq->frame_count = frame_idx + 1;
-    }
+    /* 更新帧计数 */
+    if (frame_idx + 1 > seq->frame_count) seq->frame_count = (uint16_t)(frame_idx + 1);
 
     LOG_D("[TEACH] Save frame G%d F%d (deg): M1=%.2f, M2=%.2f, M3=%.2f, M4=%.2f, dur=%dms, action=%d",
           group_idx, frame_idx, 

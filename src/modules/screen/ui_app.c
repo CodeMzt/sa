@@ -1,6 +1,8 @@
 /**
  * @file    ui_app.c
- * @brief   UI 核心实现
+ * @brief   UI 核心实现（LVGL 页面管理与交互逻辑）
+ * @date    2026-02-11
+ * @author  Ma Ziteng
  */
 
 #include "ui_app.h"
@@ -13,6 +15,7 @@
 #include "nvm_types.h"
 #include "nvm_manager.h"
 #include "drv_microphone.h"
+#include "motion_ctrl.h"
 
 /* -------------------------------------------------------------------------- */
 /* Private Variables                                                          */
@@ -27,22 +30,14 @@ typedef struct {
     uint16_t * p_duration;
 } teach_frame_ctx_t;
 
-typedef struct {
-    uint8_t group_idx;
-    uint8_t frame_idx;
-    uint16_t duration;
-} action_select_ctx_t;
-
 /* 页面状态枚举 */
 typedef enum {
     PAGE_HOME = 0,
     PAGE_TOUCH,
     PAGE_VOICE,
     PAGE_DEBUG,
-    PAGE_TEACH_MAIN,
     PAGE_TEACH_MONITOR,
     PAGE_TEACH_RECORD,
-    PAGE_TEACH_FRAMES,
     PAGE_TEACH_ZERO
 } ui_page_t;
 
@@ -114,7 +109,6 @@ static void event_queue_back_cb(lv_event_t * e);
 static void event_voice_queue_back_cb(lv_event_t * e);
 static lv_obj_t* create_status_label(lv_obj_t * parent, const char* text);
 
-static void create_teach_page(void);
 static void event_teach_submode_cb(lv_event_t * e);
 static void create_teach_monitor_page(void);
 static void teach_monitor_update_cb(lv_timer_t * timer);
@@ -374,7 +368,7 @@ static void create_home_page(void) {
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 60);
 
     lv_obj_t * cont = lv_obj_create(lv_scr_act());
-    lv_obj_set_size(cont, 260, 240);
+    lv_obj_set_size(cont, 260, 200);
     lv_obj_align(cont, LV_ALIGN_CENTER, 0, 20);
     lv_obj_set_flex_flow(cont, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(cont, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
@@ -397,8 +391,7 @@ static void create_home_page(void) {
 
     ADD_BIG_BTN("TOUCH MODE", 1);
     ADD_BIG_BTN("VOICE MODE", 2);
-    ADD_BIG_BTN("TEACH MODE", 4);
-    ADD_BIG_BTN("DEBUG MENU", 3);
+    ADD_BIG_BTN("DEBUG MODE", 3);
 }
 
 /**
@@ -571,23 +564,22 @@ static void create_voice_page(void) {
  */
 static void create_debug_page(void) {
     lv_obj_clean(lv_scr_act());
+    cleanup_ui_pointers();
 
     lv_obj_t * title = lv_label_create(lv_scr_act());
-    lv_label_set_text(title, "WIFI DEBUG MODE");
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
+    lv_label_set_text(title, "DEBUG MODE");
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_16, 0);
     lv_obj_set_style_text_color(title, COL_TEXT_MAIN, 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 45);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 48);
 
     /* === 状态显示框（自适应，避免与底部按钮重叠）=== */
     lv_coord_t box_w = (LV_HOR_RES > 300) ? 280 : (LV_HOR_RES - 20);
-    lv_coord_t box_h = (LV_VER_RES >= 420) ? 130 : 110;
-    lv_coord_t box_y = 80;
+    lv_coord_t box_h = (LV_VER_RES >= 420) ? 112 : 92;
+    lv_coord_t box_y = 70;
     lv_coord_t bottom_safe_top = LV_VER_RES - 85; /* 预留底部按钮区域 */
-    if (box_y + box_h > bottom_safe_top) {
-        box_y = bottom_safe_top - box_h;
-        if (box_y < 70) {
-            box_y = 70;
-        }
+    if (box_y + box_h + 130 > bottom_safe_top) {
+        box_h = bottom_safe_top - box_y - 130;
+        if (box_h < 70) box_h = 70;
     }
 
     lv_obj_t * box = lv_obj_create(lv_scr_act());
@@ -625,6 +617,40 @@ static void create_debug_page(void) {
     lv_obj_set_style_text_font(lbl_sub, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(lbl_sub, COL_GRAY_DARK, 0);
 
+    lv_coord_t tool_top = box_y + box_h + 8;
+    lv_coord_t tool_h = bottom_safe_top - tool_top;
+    if (tool_h < 116) tool_h = 116;
+    if (tool_h > 170) tool_h = 170;
+
+    lv_obj_t * cont = lv_obj_create(lv_scr_act());
+    lv_obj_set_size(cont, 260, tool_h);
+    lv_obj_align(cont, LV_ALIGN_TOP_MID, 0, tool_top);
+    lv_obj_set_flex_flow(cont, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(cont, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_bg_opa(cont, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(cont, 0, 0);
+    lv_obj_set_style_pad_top(cont, 0, 0);
+    lv_obj_set_style_pad_bottom(cont, 0, 0);
+    lv_obj_set_style_pad_row(cont, 4, 0);
+    lv_obj_clear_flag(cont, LV_OBJ_FLAG_SCROLLABLE);
+
+    #define ADD_DEBUG_TOOL_BTN(txt, id) \
+        do { \
+            lv_obj_t * btn = lv_btn_create(cont); \
+            lv_obj_set_width(btn, lv_pct(100)); \
+            lv_obj_set_height(btn, 34); \
+            lv_obj_add_style(btn, &style_btn_std, 0); \
+            lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE); \
+            lv_obj_add_event_cb(btn, event_teach_submode_cb, LV_EVENT_CLICKED, (void*)(uintptr_t)id); \
+            lv_obj_t * l = lv_label_create(btn); \
+            lv_label_set_text(l, txt); \
+            lv_obj_center(l); \
+        } while(0)
+
+    ADD_DEBUG_TOOL_BTN("MONITOR", 1);
+    ADD_DEBUG_TOOL_BTN("RECORD", 2);
+    ADD_DEBUG_TOOL_BTN("ZERO", 3);
+
     /* === BACK 按钮 === */
     lv_obj_t * btn_back = lv_btn_create(lv_scr_act());
     lv_obj_set_size(btn_back, 80, 60);
@@ -649,8 +675,8 @@ static void create_debug_page(void) {
  */
 static void event_nav_cb(lv_event_t * e) {
     int id = (int)(uintptr_t)lv_event_get_user_data(e);
+    bool debug_mode_active = false;
     label_queue_info = NULL;
-    g_sys_status.is_debug_mode_active = false;
 
     switch(id) {
         case 0: 
@@ -668,15 +694,12 @@ static void event_nav_cb(lv_event_t * e) {
             break;
         case 3: 
             g_current_page = PAGE_DEBUG;
-            g_sys_status.is_debug_mode_active = true;
+            debug_mode_active = true;
             create_debug_page(); 
             break;
-        case 4: 
-            g_current_page = PAGE_TEACH_MAIN;
-            user_on_teach_enter();
-            create_teach_page(); 
-            break;
     }
+
+    g_sys_status.is_debug_mode_active = debug_mode_active;
 }
 
 /**
@@ -696,17 +719,7 @@ static void event_back_confirm_req_cb(lv_event_t * e) {
                 lv_obj_add_event_cb(mbox, event_mbox_cb, LV_EVENT_VALUE_CHANGED, NULL);
             }
             break;
-        
-        case PAGE_TEACH_MAIN:
-            /* TEACH 主页返回HOME也弹确认框 */
-            {
-                static const char * btns[] = {"YES", "NO", ""};
-                lv_obj_t * mbox = lv_msgbox_create(NULL, "Confirm", "Return to Home?", btns, false);
-                lv_obj_center(mbox);
-                lv_obj_add_event_cb(mbox, event_mbox_cb, LV_EVENT_VALUE_CHANGED, NULL);
-            }
-            break;
-        
+
         default:
             break;
     }
@@ -721,10 +734,6 @@ static void event_mbox_cb(lv_event_t * e) {
     const char * btn_txt = lv_msgbox_get_active_btn_text(mbox);
 
     if(btn_txt && strcmp(btn_txt, "YES") == 0) {
-        if (g_current_page == PAGE_TEACH_MAIN) {
-            user_on_teach_exit();
-        }
-
         if (g_sys_status.is_running) {
             g_sys_status.is_running = false;
             user_on_stop();
@@ -866,20 +875,14 @@ static void event_start_cb(lv_event_t * e) {
  * @param e LVGL 事件对象
  */
 static void event_instrument_cb(lv_event_t * e) {
-    if (g_sys_status.is_running) {
-        return;
-    }
+    if (g_sys_status.is_running) return;
 
     const char* name = (const char*)lv_event_get_user_data(e);
     instrument_t inst = INSTRUMENT_NONE;
 
-    if (strcmp(name, "SCALPEL") == 0) {
-        inst = INSTRUMENT_SCALPEL;
-    } else if (strcmp(name, "HEMOSTAT") == 0) {
-        inst = INSTRUMENT_HEMOSTAT;
-    } else if (strcmp(name, "FORCEPS") == 0) {
-        inst = INSTRUMENT_FORCEPS;
-    }
+    if (strcmp(name, "SCALPEL") == 0) inst = INSTRUMENT_SCALPEL;
+    else if (strcmp(name, "HEMOSTAT") == 0) inst = INSTRUMENT_HEMOSTAT;
+    else if (strcmp(name, "FORCEPS") == 0) inst = INSTRUMENT_FORCEPS;
 
     if (add_instrument_to_queue(inst)) {
         update_queue_display_string();
@@ -892,9 +895,7 @@ static void event_instrument_cb(lv_event_t * e) {
  * @param e LVGL 事件对象
  */
 static void event_queue_back_cb(lv_event_t * e) {
-    if (g_sys_status.is_running) {
-        return;
-    }
+    if (g_sys_status.is_running) return;
 
     if (g_sys_status.act_queue_count > 0) {
         remove_instrument_from_queue(g_sys_status.act_queue_count - 1);
@@ -931,58 +932,6 @@ bool ui_add_instrument_to_queue(instrument_t inst) {
 /* -------------------------------------------------------------------------- */
 /* 示教模式页面                                                               */
 /* -------------------------------------------------------------------------- */
-
-/**
- * @brief 创建示教模式页面（子模式选择）
- */
-static void create_teach_page(void) {
-    lv_obj_clean(lv_scr_act());
-
-    lv_obj_t * title = lv_label_create(lv_scr_act());
-    lv_label_set_text(title, "TEACH MODE");
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
-    lv_obj_set_style_text_color(title, COL_TEXT_MAIN, 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 60);
-
-    lv_obj_t * cont = lv_obj_create(lv_scr_act());
-    lv_obj_set_size(cont, 260, 210);
-    lv_obj_align(cont, LV_ALIGN_CENTER, 0, 20);
-    lv_obj_set_flex_flow(cont, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(cont, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_bg_opa(cont, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(cont, 0, 0);
-    lv_obj_clear_flag(cont, LV_OBJ_FLAG_SCROLLABLE);
-
-    #define ADD_TEACH_BTN(txt, id) \
-        do { \
-            lv_obj_t * btn = lv_btn_create(cont); \
-            lv_obj_set_width(btn, lv_pct(100)); \
-            lv_obj_set_height(btn, 55); \
-            lv_obj_add_style(btn, &style_btn_std, 0); \
-            lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE); \
-            lv_obj_add_event_cb(btn, event_teach_submode_cb, LV_EVENT_CLICKED, (void*)(uintptr_t)id); \
-            lv_obj_t * l = lv_label_create(btn); \
-            lv_label_set_text(l, txt); \
-            lv_obj_center(l); \
-        } while(0)
-
-    ADD_TEACH_BTN("MONITOR", 1);
-    ADD_TEACH_BTN("RECORD", 2);
-    ADD_TEACH_BTN("ZERO", 3);
-
-    /* === BACK 按钮 === */
-    lv_obj_t * btn_back = lv_btn_create(lv_scr_act());
-    lv_obj_set_size(btn_back, 80, 60);
-    lv_obj_align(btn_back, LV_ALIGN_BOTTOM_LEFT, 10, -10);
-    lv_obj_add_style(btn_back, &style_btn_std, 0);
-    lv_obj_set_style_bg_color(btn_back, COL_GRAY_DARK, 0);
-    lv_obj_clear_flag(btn_back, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_event_cb(btn_back, event_back_confirm_req_cb, LV_EVENT_CLICKED, NULL);
-
-    lv_obj_t * lbl_back = lv_label_create(btn_back);
-    lv_label_set_text(lbl_back, "BACK");
-    lv_obj_center(lbl_back);
-}
 
 /**
  * @brief 示教模式子模式选择回调
@@ -1105,8 +1054,8 @@ static void event_teach_zero_back_cb(lv_event_t * e) {
             g_zero_feedback_timers[i] = NULL;
         }
     }
-    g_current_page = PAGE_TEACH_MAIN;
-    create_teach_page();
+    g_current_page = PAGE_DEBUG;
+    create_debug_page();
 }
 
 /**
@@ -1114,9 +1063,7 @@ static void event_teach_zero_back_cb(lv_event_t * e) {
  */
 static void event_teach_zero_set_cb(lv_event_t * e) {
     teach_zero_ctx_t * ctx = (teach_zero_ctx_t *)lv_event_get_user_data(e);
-    if (!ctx || !ctx->btn || !lv_obj_is_valid(ctx->btn)) {
-        return;
-    }
+    if (!ctx || !ctx->btn || !lv_obj_is_valid(ctx->btn)) return;
 
     fsp_err_t err = robstride_set_zero(ctx->motor_id);
 
@@ -1127,14 +1074,10 @@ static void event_teach_zero_set_cb(lv_event_t * e) {
     lv_obj_t * lbl = lv_obj_get_child(ctx->btn, 0);
     if (err == FSP_SUCCESS) {
         lv_obj_add_style(ctx->btn, &style_btn_green, 0);
-        if (lbl) {
-            lv_label_set_text(lbl, "Zeroed!");
-        }
+        if (lbl) lv_label_set_text(lbl, "Zeroed!");
     } else {
         lv_obj_add_style(ctx->btn, &style_btn_red, 0);
-        if (lbl) {
-            lv_label_set_text(lbl, "Failed");
-        }
+        if (lbl) lv_label_set_text(lbl, "Failed");
     }
 
     if (ctx->idx < TEACH_ZERO_BUTTON_NUM) {
@@ -1156,14 +1099,10 @@ static void zero_feedback_timer_cb(lv_timer_t * timer) {
         lv_obj_remove_style(ctx->btn, &style_btn_red, 0);
         lv_obj_add_style(ctx->btn, &style_btn_std, 0);
         lv_obj_t * lbl = lv_obj_get_child(ctx->btn, 0);
-        if (lbl && ctx->default_text) {
-            lv_label_set_text(lbl, ctx->default_text);
-        }
+        if (lbl && ctx->default_text) lv_label_set_text(lbl, ctx->default_text);
     }
 
-    if (ctx && ctx->idx < TEACH_ZERO_BUTTON_NUM) {
-        g_zero_feedback_timers[ctx->idx] = NULL;
-    }
+    if (ctx && ctx->idx < TEACH_ZERO_BUTTON_NUM) g_zero_feedback_timers[ctx->idx] = NULL;
 
     lv_timer_del(timer);
 }
@@ -1276,8 +1215,8 @@ static void event_teach_monitor_back_cb(lv_event_t * e) {
         lv_timer_del(g_teach_monitor_timer);
         g_teach_monitor_timer = NULL;
     }
-    g_current_page = PAGE_TEACH_MAIN;
-    create_teach_page();
+    g_current_page = PAGE_DEBUG;
+    create_debug_page();
 }
 
 /**
@@ -1523,10 +1462,14 @@ static void teach_record_angle_update_cb(lv_timer_t * timer) {
     lv_obj_t ** labels = (lv_obj_t **)timer->user_data;
     if (!labels) return;
 
+    float q_abs[4] = {0.0f};
+    bool has_abs = motion_adapter_capture_abs(&g_motion_ctrl.adapter, q_abs);
+
     char buf[16];
     for (int i = 0; i < 4; i++) {
         if (labels[i] && lv_obj_is_valid(labels[i])) {
-            snprintf(buf, sizeof(buf), "M%d:%.1f", i+1, g_motors[i].feedback.position);
+            float angle = has_abs ? q_abs[i] : g_motors[i].feedback.position;
+            snprintf(buf, sizeof(buf), "M%d:%.1f", i+1, angle);
             lv_label_set_text(labels[i], buf);
         }
     }
@@ -1606,8 +1549,8 @@ static void event_teach_frame_record_cb(lv_event_t * e) {
  * @brief RECORD 页面 BACK 回调（直接返回 TEACH 主页）
  */
 static void event_teach_record_main_back_cb(lv_event_t * e) {
-    g_current_page = PAGE_TEACH_MAIN;
-    create_teach_page();
+    g_current_page = PAGE_DEBUG;
+    create_debug_page();
 }
 
 /**
@@ -1662,9 +1605,7 @@ static void frame_feedback_timer_cb(lv_timer_t * timer) {
             lv_label_set_text(lbl, buf);
         }
     }
-    if (ctx && ctx->frame_idx < TEACH_FRAMES_PER_GROUP) {
-        g_frame_feedback_timers[ctx->frame_idx] = NULL;
-    }
+    if (ctx && ctx->frame_idx < TEACH_FRAMES_PER_GROUP) g_frame_feedback_timers[ctx->frame_idx] = NULL;
     lv_timer_del(timer);
 }
 

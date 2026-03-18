@@ -1,8 +1,8 @@
-/*
- * shared_data.h
- *
- *  Created on: 2026年1月24日
- *      Author: Ma Ziteng
+/**
+ * @file    shared_data.h
+ * @brief   全局共享数据定义与操作接口
+ * @date    2026-01-24
+ * @author  Ma Ziteng
  */
 
 #ifndef SHARED_DATA_H_
@@ -37,7 +37,15 @@ typedef struct {
     uint8_t act_queue_count;
 } system_status_t;
 
+typedef struct {
+    bool active;
+    uint8_t motor_id;
+    int16_t vel_centi_rad_s;
+    uint32_t last_update_tick;
+} teach_jog_cmd_t;
+
 extern volatile system_status_t g_sys_status;
+extern volatile teach_jog_cmd_t g_teach_jog_cmd;
 
 /* 全局电机数组（由 robstride_motor.c 定义，此处导出） */
 extern robstride_motor_t g_motors[ROBSTRIDE_MOTOR_NUM];

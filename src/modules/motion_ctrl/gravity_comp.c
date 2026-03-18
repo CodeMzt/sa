@@ -17,9 +17,7 @@ static const float DEFAULT_SIN234_COEFF = 0.0f; /* sin(q2+q3+q4) 项系数 */
 static const float DEFAULT_COS234_COEFF = 0.00f;/* cos(q2+q3+q4) 项系数 */
 
 void grav_init_default(grav_param_t *gp) {
-    if (gp == NULL) {
-        return;
-    }
+    if (gp == NULL) return;
     
     gp->sin2_coeff = DEFAULT_SIN2_COEFF;
     gp->cos2_coeff = DEFAULT_COS2_COEFF;
@@ -53,9 +51,7 @@ void grav_compute(const grav_param_t *gp, const float q[4], float tau_ff_out[4])
 void grav_set_params(grav_param_t *gp, float sin2_coeff, float cos2_coeff, 
                      float sin23_coeff, float cos23_coeff, 
                      float sin234_coeff, float cos234_coeff) {
-    if (gp == NULL) {
-        return;
-    }
+    if (gp == NULL) return;
     
     gp->sin2_coeff = sin2_coeff;
     gp->cos2_coeff = cos2_coeff;

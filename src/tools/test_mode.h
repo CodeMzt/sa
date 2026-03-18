@@ -1,7 +1,7 @@
-/*
- * test_mode.h
- *
- * Compile-time test mode switches.
+/**
+ * @file    test_mode.h
+ * @brief   编译时测试模式切换开关
+ * @author  Ma Ziteng
  */
 
 #ifndef TEST_MODE_H_

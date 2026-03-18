@@ -8,6 +8,7 @@
 #include "nvm_manager.h"
 #include "nvm_config.h"
 #include "sys_log.h"
+#include "semphr.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -15,6 +16,7 @@
 static sys_config_t    g_sys_cfg;
 static motion_config_t g_motion_cfg;
 static volatile uint8_t g_nvm_init_state = 0U; /* 0:未初始化 1:初始化中 2:已完成 */
+extern SemaphoreHandle_t g_cfg_save_mutex;
 
 /* ---- 日志缓冲 ---- */
 #define LOG_CACHE_SIZE  256               /**< 页单位 */
@@ -45,9 +47,7 @@ static uint32_t    get_device_id(void);
  * @return FSP_SUCCESS 表示成功，其他表示错误
  */
 fsp_err_t nvm_init(void) {
-    if (g_nvm_init_state == 2U) {
-        return FSP_SUCCESS;
-    }
+    if (g_nvm_init_state == 2U) return FSP_SUCCESS;
 
     taskENTER_CRITICAL();
     if (g_nvm_init_state == 0U) {
@@ -55,9 +55,7 @@ fsp_err_t nvm_init(void) {
         taskEXIT_CRITICAL();
     } else {
         taskEXIT_CRITICAL();
-        while (g_nvm_init_state == 1U) {
-            vTaskDelay(pdMS_TO_TICKS(10));
-        }
+        while (g_nvm_init_state == 1U) vTaskDelay(pdMS_TO_TICKS(10));
         return (g_nvm_init_state == 2U) ? FSP_SUCCESS : FSP_ERR_INTERNAL;
     }
 
@@ -73,6 +71,15 @@ fsp_err_t nvm_init(void) {
     if (err != FSP_SUCCESS) {
         g_nvm_init_state = 0U;
         return err;
+    }
+
+    if (g_cfg_save_mutex == NULL) {
+        g_cfg_save_mutex = xSemaphoreCreateMutex();
+        if (g_cfg_save_mutex == NULL) {
+            g_nvm_init_state = 0U;
+            return FSP_ERR_OUT_OF_MEMORY;
+        }
+        (void)xSemaphoreGive(g_cfg_save_mutex);
     }
 
     /* 系统配置 */
@@ -108,7 +115,7 @@ fsp_err_t nvm_init(void) {
     }
 
     scan_log_head();
-    LOG_D("Device ID: 0x%.8x", get_device_id());
+    LOG_D("Device ID: 0x%.8lx", (unsigned long)get_device_id());
 
     g_nvm_init_state = 2U;
     return FSP_SUCCESS;
@@ -130,11 +137,24 @@ const sys_config_t* nvm_get_sys_config(void) { return &g_sys_cfg; }
  * @return FSP_SUCCESS 表示成功
  */
 fsp_err_t nvm_save_sys_config(const sys_config_t *new_cfg) {
+    if (new_cfg == NULL) return FSP_ERR_ASSERTION;
+
+    if (g_cfg_save_mutex != NULL) {
+        if (xSemaphoreTake(g_cfg_save_mutex, portMAX_DELAY) != pdTRUE) return FSP_ERR_INTERNAL;
+    }
+
     memcpy(&g_sys_cfg, new_cfg, sizeof(sys_config_t));
     g_sys_cfg.magic_word = NVM_MAGIC_WORD;
     g_sys_cfg.write_count++;
     g_sys_cfg.crc32 = calc_crc32((uint8_t *)&g_sys_cfg, sizeof(sys_config_t) - 4);
-    return qspi_erase_write(NVM_ADDR_SYS_CONFIG, (uint8_t *)&g_sys_cfg, sizeof(sys_config_t));
+
+    fsp_err_t err = qspi_erase_write(NVM_ADDR_SYS_CONFIG, (uint8_t *)&g_sys_cfg, sizeof(sys_config_t));
+
+    if (g_cfg_save_mutex != NULL) {
+        (void)xSemaphoreGive(g_cfg_save_mutex);
+    }
+
+    return err;
 }
 
 /**
@@ -149,9 +169,22 @@ const motion_config_t* nvm_get_motion_config(void) { return &g_motion_cfg; }
  * @return FSP_SUCCESS 表示成功
  */
 fsp_err_t nvm_save_motion_config(const motion_config_t *new_motion) {
+    if (new_motion == NULL) return FSP_ERR_ASSERTION;
+
+    if (g_cfg_save_mutex != NULL) {
+        if (xSemaphoreTake(g_cfg_save_mutex, portMAX_DELAY) != pdTRUE) return FSP_ERR_INTERNAL;
+    }
+
     memcpy(&g_motion_cfg, new_motion, sizeof(motion_config_t));
     g_motion_cfg.crc32 = calc_crc32((uint8_t *)&g_motion_cfg, sizeof(motion_config_t) - 4);
-    return qspi_erase_write(NVM_ADDR_MOTION_SEQ, (uint8_t *)&g_motion_cfg, sizeof(motion_config_t));
+
+    fsp_err_t err = qspi_erase_write(NVM_ADDR_MOTION_SEQ, (uint8_t *)&g_motion_cfg, sizeof(motion_config_t));
+
+    if (g_cfg_save_mutex != NULL) {
+        (void)xSemaphoreGive(g_cfg_save_mutex);
+    }
+
+    return err;
 }
 
 /* ===========================================================
@@ -171,7 +204,7 @@ static fsp_err_t flush_log_cache(void) {
     fsp_err_t err = FSP_SUCCESS;
 
     // 预擦除下一个扇区
-    uint32_t ea = (wr_addr / NVM_SECTOR_SIZE + 1)* NVM_SECTOR_SIZE;
+    uint32_t ea = (wr_addr / NVM_SECTOR_SIZE + 1) * NVM_SECTOR_SIZE;
     wait_ready();
     err = g_qspi0.p_api->erase(g_qspi0.p_ctrl, (uint8_t *)(QSPI_DEVICE_START_ADDRESS + ea), NVM_SECTOR_SIZE);
     if (err != FSP_SUCCESS) return err;
@@ -202,18 +235,16 @@ static fsp_err_t flush_log_cache(void) {
  * @param log_msg 日志消息
  */
 void nvm_append_log(char *log_msg) {
-    uint16_t len = (uint16_t)strlen(log_msg) + 1;
+    uint16_t len = (uint16_t)(strlen(log_msg) + 1);
 
     /* 缓存放不下则先 flush */
-    if (g_log_idx + len > LOG_CACHE_SIZE) {
-        flush_log_cache();
-    }
+    if (g_log_idx + len > LOG_CACHE_SIZE) flush_log_cache();
 
     /* 如果单条日志超过缓存大小，截断 */
     if (len > LOG_CACHE_SIZE) len = LOG_CACHE_SIZE;
 
     memcpy(&g_log_cache[g_log_idx], log_msg, len);
-    g_log_idx += len;
+    g_log_idx = (uint16_t)(g_log_idx + len);
 }
 
 /**
@@ -262,7 +293,10 @@ fsp_err_t nvm_save_logs(void) {
  */
 void wait_ready(void) {
     spi_flash_status_t st = { .write_in_progress = true };
-    while (st.write_in_progress) { g_qspi0.p_api->statusGet(g_qspi0.p_ctrl, &st); vTaskDelay(1); }
+    while (st.write_in_progress) {
+        g_qspi0.p_api->statusGet(g_qspi0.p_ctrl, &st);
+        vTaskDelay(1);
+    }
 }
 
 /**
@@ -273,25 +307,25 @@ static void load_defaults(void) {
     g_sys_cfg.magic_word = NVM_MAGIC_WORD;
     g_sys_cfg.version    = NVM_VERSION;
 
-    uint8_t ip[]  = {192,168,31,250};  memcpy(g_sys_cfg.ip_addr,  ip,  4);
-    uint8_t msk[] = {255,255,255,0}; memcpy(g_sys_cfg.netmask, msk, 4);
-    uint8_t gw[]  = {192,168,31,1};  memcpy(g_sys_cfg.gateway,  gw,  4);
-    uint8_t srv[] = {192,168,31,229};  memcpy(g_sys_cfg.server_ip,srv, 4);
+    uint8_t ip[]  = {192, 168, 31, 250}; memcpy(g_sys_cfg.ip_addr, ip, 4);
+    uint8_t msk[] = {255, 255, 255, 0};  memcpy(g_sys_cfg.netmask, msk, 4);
+    uint8_t gw[]  = {192, 168, 31, 1};   memcpy(g_sys_cfg.gateway, gw, 4);
+    uint8_t srv[] = {192, 168, 31, 229}; memcpy(g_sys_cfg.server_ip, srv, 4);
     g_sys_cfg.server_port = 2333;
     g_sys_cfg.debug_port  = 8080;
 
     strncpy(g_sys_cfg.wifi_ssid, "SurgicalArm_Debug", sizeof(g_sys_cfg.wifi_ssid) - 1);
-    strncpy(g_sys_cfg.wifi_psk,  "fdudebug",          sizeof(g_sys_cfg.wifi_psk)  - 1);
+    strncpy(g_sys_cfg.wifi_psk,  "fdudebug",          sizeof(g_sys_cfg.wifi_psk) - 1);
 
     g_sys_cfg.angle_min[0] = -9000;  g_sys_cfg.angle_max[0] =  9000;
     g_sys_cfg.angle_min[1] = -4500;  g_sys_cfg.angle_max[1] = 13500;
     g_sys_cfg.angle_min[2] = -6000;  g_sys_cfg.angle_max[2] = 12000;
     g_sys_cfg.angle_min[3] = -6000;  g_sys_cfg.angle_max[3] = 12000;
 
-    g_sys_cfg.current_limit[0] = 200;
-    g_sys_cfg.current_limit[1] = 200;
-    g_sys_cfg.current_limit[2] = 150;
-    g_sys_cfg.current_limit[3] = 150;
+    g_sys_cfg.current_limit[0] = 100;
+    g_sys_cfg.current_limit[1] = 100;
+    g_sys_cfg.current_limit[2] = 100;
+    g_sys_cfg.current_limit[3] = 100;
     g_sys_cfg.grip_force_max   = 500;
 }
 

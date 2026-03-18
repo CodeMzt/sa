@@ -1,6 +1,8 @@
 /**
  * @file    ui_app.h
- * @brief   UI 应用层头文件
+ * @brief   UI 应用层头文件（接口定义与回调声明）
+ * @date    2026-02-11
+ * @author  Ma Ziteng
  */
 
 #ifndef UI_APP_H_

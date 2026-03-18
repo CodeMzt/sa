@@ -13,50 +13,69 @@
 #include <math.h>
 
 #define DEG2RAD_F 0.01745329251994329577f
+#define GRIPPER_ACTION_KP      8.0f
+#define GRIPPER_ACTION_KD      0.8f
 
 /* 全局控制器实例 */
 motion_controller_t g_motion_ctrl = {0};
 
-static void capture_idle_hold_targets(motion_controller_t *ctrl) {
-    if (ctrl == NULL) {
-        return;
+static fsp_err_t trigger_gripper_action(uint8_t action) {
+    if (action == ACTION_GRIP) {
+        return robstride_gripper_grasp(ROBSTRIDE_MOTOR_ID_GRIPPER,
+                                       ROBSTRIDE_GRIPPER_CLOSED_POS_RAD,
+                                       GRIPPER_ACTION_KP,
+                                       GRIPPER_ACTION_KD,
+                                       0.0f);
     }
 
-    ctrl->idle_q_hold[0] = g_motors[0].feedback.position;
-    ctrl->idle_q_hold[1] = g_motors[1].feedback.position;
-    ctrl->idle_q_hold[2] = g_motors[2].feedback.position;
-    ctrl->idle_q_hold[3] = g_motors[3].feedback.position;
+    if (action == ACTION_RELEASE) {
+        return robstride_gripper_release(ROBSTRIDE_MOTOR_ID_GRIPPER,
+                                         GRIPPER_ACTION_KP,
+                                         GRIPPER_ACTION_KD);
+    }
+
+    return FSP_ERR_ASSERTION;
+}
+
+static bool capture_idle_hold_targets(motion_controller_t *ctrl) {
+    if (ctrl == NULL) return false;
+
+    float q_abs[4] = {0};
+    if (!motion_adapter_capture_abs(&ctrl->adapter, q_abs)) {
+        ctrl->idle_hold_valid = false;
+        LOG_E("Capture idle abs failed");
+        return false;
+    }
+
+    ctrl->idle_q_hold[0] = q_abs[0];
+    ctrl->idle_q_hold[1] = q_abs[1];
+    ctrl->idle_q_hold[2] = q_abs[2];
+    ctrl->idle_q_hold[3] = q_abs[3];
     ctrl->idle_hold_valid = true;
 
     memcpy(ctrl->last_q_target, ctrl->idle_q_hold, 4 * sizeof(float));
     memset(ctrl->last_v_target, 0, 4 * sizeof(float));
+
+    return true;
+}
+
+static void motion_ctrl_set_common_pd(motion_controller_t *ctrl, const float kp[4], const float kd[4]) {
+    if (ctrl == NULL) return;
+    if (kp != NULL) memcpy(ctrl->config.controller.kp, kp, 4 * sizeof(float));
+    if (kd != NULL) memcpy(ctrl->config.controller.kd, kd, 4 * sizeof(float));
 }
 
 /* 默认配置 */
 static const motion_ctrl_config_t DEFAULT_CONFIG = {
-    /* 示教模式参数 */
-    .teach = {
-        .kp = {0.0f, 0.0f, 0.0f, 0.0f},            /* 零刚度 */
-        .kd = {0.5f, 0.5f, 0.5f, 0.5f},            /* 中等阻尼 */
-        .enable_joint1 = false,                    /* 默认不启用关节1零力拖动 */
-        .joint1_kd = 0.5f                          /* 关节1阻尼 */
-    },
-    
-    /* 回放模式参数 */
-    .playback = {
-        .kp = {50.0f, 50.0f, 50.0f, 50.0f},        /* 中等刚度 */
-        .kd = {1.0f, 1.0f, 1.0f, 1.0f}             /* 中等阻尼 */
-    },
-
-    /* IDLE保持模式参数 */
-    .idle = {
-        .kp = {120.0f, 120.0f, 120.0f, 120.0f},    /* 高刚度 */
-        .kd = {4.0f, 4.0f, 4.0f, 4.0f}             /* 高阻尼 */
+    /* 三模式共用控制器参数 */
+    .controller = {
+        .kp = {8.0f, 8.0f, 8.0f, 8.0f},
+        .kd = {0.8f, 0.8f, 0.8f, 0.8f}
     },
     
     /* 安全参数 */
     .max_torque = {6.0f, 6.0f, 6.0f, 6.0f},        /* 最大力矩 */
-    .max_velocity = {10.0f, 10.0f, 10.0f, 10.0f}   /* 最大速度 */
+    .max_velocity = {0.2f, 0.2f, 0.2f, 0.2f}   /* 最大速度 */
 };
 
 /**
@@ -76,9 +95,8 @@ bool motion_ctrl_init(motion_controller_t *ctrl, const motion_ctrl_config_t *con
     ctrl->idle_hold_valid = false;
     
     /* 设置配置 */
-    if (config != NULL) {
-        memcpy(&ctrl->config, config, sizeof(motion_ctrl_config_t));
-    } else {
+    if (config != NULL) memcpy(&ctrl->config, config, sizeof(motion_ctrl_config_t));
+    else {
         memcpy(&ctrl->config, &DEFAULT_CONFIG, sizeof(motion_ctrl_config_t));
         /* 仅默认配置时填充默认重力参数 */
         grav_init_default(&ctrl->config.grav_params);
@@ -92,6 +110,20 @@ bool motion_ctrl_init(motion_controller_t *ctrl, const motion_ctrl_config_t *con
         ctrl->last_q_target[i] = 0.0f;
         ctrl->last_v_target[i] = 0.0f;
         ctrl->idle_q_hold[i] = 0.0f;
+    }
+
+    motion_adapter_config_t adapter_cfg = {0};
+    adapter_cfg.nvm_save_interval_ms = 2000U;
+    for (int i = 0; i < 4; i++) {
+        adapter_cfg.kp[i] = ctrl->config.controller.kp[i];
+        adapter_cfg.kd[i] = ctrl->config.controller.kd[i];
+        adapter_cfg.max_velocity[i] = ctrl->config.max_velocity[i];
+        adapter_cfg.max_acceleration[i] = fmaxf(8.0f * ctrl->config.max_velocity[i], 8.0f);
+    }
+
+    if (!motion_adapter_init(&ctrl->adapter, &adapter_cfg)) {
+        LOG_E("Failed to initialize motion adapter");
+        return false;
     }
     
     ctrl->is_initialized = true;
@@ -109,7 +141,7 @@ bool motion_ctrl_set_motion_mode(motion_controller_t *ctrl) {
         return false;
     }
     
-    LOG_I("Switching joints 1-4 to motion control mode...");
+    LOG_I("Switching joints 1-4 to speed control mode...");
     
     fsp_err_t err;
     const uint8_t joint_ids[4] = {
@@ -119,25 +151,30 @@ bool motion_ctrl_set_motion_mode(motion_controller_t *ctrl) {
         ROBSTRIDE_MOTOR_ID_JOINT4
     };
     
-    /* 切换到运控模式 */
+    /* 切换到速度模式 */
     for (uint8_t i = 0; i < 4; i++) {
-        err = robstride_set_run_mode(joint_ids[i], ROBSTRIDE_MODE_MOTION_CTRL);
+        robstride_stop(joint_ids[i]);
+        err = robstride_set_run_mode(joint_ids[i], ROBSTRIDE_MODE_SPEED);
         if (err != FSP_SUCCESS) {
-            LOG_E("Failed to set joint %d to motion mode: %d", i+1, err);
+            LOG_E("Failed to set joint %d to speed mode: %d", i+1, err);
             return false;
         }
         vTaskDelay(5);  /* 等待模式切换完成 */
+        err = robstride_enable(joint_ids[i]);
+        if (err != FSP_SUCCESS) {
+            LOG_E("Failed to set joint %d to speed mode: %d", i+1, err);
+            return false;
+        }
     }
     
-    LOG_I("All joints switched to motion control mode");
+    LOG_I("All joints switched to speed control mode");
     return true;
 }
 
 /**
  * @brief 启动示教拖动模式
  */
-bool motion_ctrl_start_teaching(motion_controller_t *ctrl)
-{
+bool motion_ctrl_start_teaching(motion_controller_t *ctrl) {
     if (ctrl == NULL || !ctrl->is_initialized) {
         LOG_E("motion_ctrl_start_teaching: controller not initialized");
         return false;
@@ -194,11 +231,17 @@ bool motion_ctrl_start_playback(motion_controller_t *ctrl, const action_sequence
     /* 回放控制统一使用弧度，并补入当前姿态作为起点帧 */
     action_sequence_t seq_ctrl = {0};
     if (seq->frame_count < MAX_FRAMES_PER_SEQ) {
+        float q_abs_start[4] = {0};
+        if (!motion_adapter_capture_abs(&ctrl->adapter, q_abs_start)) {
+            LOG_E("Playback start rejected: capture abs failed");
+            return false;
+        }
+
         seq_ctrl.frame_count = seq->frame_count + 1U;
-        seq_ctrl.frames[0].angle_m1 = g_motors[0].feedback.position;
-        seq_ctrl.frames[0].angle_m2 = g_motors[1].feedback.position;
-        seq_ctrl.frames[0].angle_m3 = g_motors[2].feedback.position;
-        seq_ctrl.frames[0].angle_m4 = g_motors[3].feedback.position;
+        seq_ctrl.frames[0].angle_m1 = q_abs_start[0];
+        seq_ctrl.frames[0].angle_m2 = q_abs_start[1];
+        seq_ctrl.frames[0].angle_m3 = q_abs_start[2];
+        seq_ctrl.frames[0].angle_m4 = q_abs_start[3];
         seq_ctrl.frames[0].duration_ms = 0U;
         seq_ctrl.frames[0].action = MOVE_ONLY;
 
@@ -245,78 +288,42 @@ bool motion_ctrl_start_playback(motion_controller_t *ctrl, const action_sequence
  * @brief 停止当前运行模式
  */
 void motion_ctrl_stop(motion_controller_t *ctrl) {
-    if (ctrl == NULL || !ctrl->is_initialized) {
+    if (ctrl == NULL || !ctrl->is_initialized) return;
+
+    /* 软停：仅切换到IDLE，不下发电机STOP，保持电机使能与运控模式 */
+    if (!capture_idle_hold_targets(ctrl)) {
+        ctrl->state = MOTION_STATE_ERROR;
+        ctrl->seq_running = false;
+        traj_reset(&ctrl->trajectory);
+        LOG_E("Motion control stop rejected: capture abs failed");
         return;
     }
 
-    /* 软停：仅切换到IDLE，不下发电机STOP，保持电机使能与运控模式 */
-    capture_idle_hold_targets(ctrl);
     ctrl->state = MOTION_STATE_IDLE;
     ctrl->seq_running = false;
     traj_reset(&ctrl->trajectory);
+    motion_adapter_force_persist_sector(&ctrl->adapter);
 
     LOG_I("Motion control switched to IDLE (motors remain enabled)");
 }
 
 /**
- * @brief 计算重力补偿力矩
- */
-static void compute_gravity_compensation(motion_controller_t *ctrl, float q[4], float tau_ff[4]) {
-    /* 读取当前关节角度 */
-    q[0] = g_motors[0].feedback.position;
-    q[1] = g_motors[1].feedback.position;
-    q[2] = g_motors[2].feedback.position;
-    q[3] = g_motors[3].feedback.position;
-    
-    /* 计算重力补偿 */
-    grav_compute(&ctrl->config.grav_params, q, tau_ff);
-}
-
-/**
  * @brief 示教模式控制循环
+ * @param ctrl 控制器实例指针
+ * @param dt 时间步长（秒）
  */
-static void teach_control_loop(motion_controller_t *ctrl) {
-    float q[4] = {0};
+static void teach_control_loop(motion_controller_t *ctrl, float dt) {
+    float q_target[4] = {0};
     float v_target[4] = {0};  /* 速度目标为0 */
-    float tau_ff[4] = {0};
-    
-    /* 读取当前位置作为目标位置（保持当前位置） */
-    q[0] = g_motors[0].feedback.position;
-    q[1] = g_motors[1].feedback.position;
-    q[2] = g_motors[2].feedback.position;
-    q[3] = g_motors[3].feedback.position;
-    
-    /* 计算重力补偿 */
-    compute_gravity_compensation(ctrl, q, tau_ff);
-    
-    /* 对每个关节发送控制指令 */
-    const uint8_t joint_ids[4] = {
-        ROBSTRIDE_MOTOR_ID_JOINT1,
-        ROBSTRIDE_MOTOR_ID_JOINT2,
-        ROBSTRIDE_MOTOR_ID_JOINT3,
-        ROBSTRIDE_MOTOR_ID_JOINT4
-    };
-    
-    for (int i = 0; i < 4; i++) {
-        float kp = ctrl->config.teach.kp[i];
-        float kd = ctrl->config.teach.kd[i];
-        
-        /* 关节1可选是否启用零力拖动 */
-        if (i == 0 && !ctrl->config.teach.enable_joint1) {
-            kp = 50.0f;  /* 保持一定刚度锁定位置 */
-            kd = ctrl->config.teach.joint1_kd;
-        }   
-        
-        /* 力矩限幅 */
-        float torque = tau_ff[i];
-        if (torque > ctrl->config.max_torque[i]) {
-            torque = ctrl->config.max_torque[i];
-        } else if (torque < -ctrl->config.max_torque[i]) {
-            torque = -ctrl->config.max_torque[i];
-        }
-        
-        /* 发送运控指令 */
-        robstride_motion_control(joint_ids[i], q[i], v_target[i], kp, kd, torque);
+
+    if (!motion_adapter_capture_abs(&ctrl->adapter, q_target)) {
+        LOG_E("Teach capture abs failed");
+        return;
+    }
+
+    motion_adapter_set_pd(&ctrl->adapter, ctrl->config.controller.kp, ctrl->config.controller.kd);
+    if (!motion_adapter_step(&ctrl->adapter, dt, q_target, v_target, NULL, NULL, NULL)) {
+        LOG_E("Teach adapter step failed");
     }
 }
 
@@ -345,27 +352,22 @@ static void playback_control_loop(motion_controller_t *ctrl, float dt) {
             q_min = q_max;
             q_max = tmp;
         }
-        if (q_target[i] < q_min) {
-            q_target[i] = q_min;
-        } else if (q_target[i] > q_max) {
-            q_target[i] = q_max;
-        }
+        if (q_target[i] < q_min) q_target[i] = q_min;
+        else if (q_target[i] > q_max) q_target[i] = q_max;
     }
     
     /* 保存目标值 */
     memcpy(ctrl->last_q_target, q_target, 4 * sizeof(float));
     memcpy(ctrl->last_v_target, v_target, 4 * sizeof(float));
     
-    /* 计算重力补偿 */
-    float tau_ff[4] = {0};
-    float q_current[4] = {
-        g_motors[0].feedback.position,
-        g_motors[1].feedback.position,
-        g_motors[2].feedback.position,
-        g_motors[3].feedback.position
-    };
-    
-    compute_gravity_compensation(ctrl, q_current, tau_ff);
+    float q_current[4] = {0};
+    float v_cmd[4] = {0};
+    float a_cmd[4] = {0};
+
+    motion_adapter_set_pd(&ctrl->adapter, ctrl->config.controller.kp, ctrl->config.controller.kd);
+    if (!motion_adapter_step(&ctrl->adapter, dt, q_target, v_target, q_current, v_cmd, a_cmd)) {
+        LOG_E("Playback adapter step failed");
+    }
 
     if ((s_track_log_div++ % 20U) == 0U) {
         LOG_D("Track J1 c=%.3f t=%.3f e=%.3f | J2 c=%.3f t=%.3f e=%.3f | J3 c=%.3f t=%.3f e=%.3f | J4 c=%.3f t=%.3f e=%.3f",
@@ -373,45 +375,6 @@ static void playback_control_loop(motion_controller_t *ctrl, float dt) {
               q_current[1], q_target[1], q_target[1] - q_current[1],
               q_current[2], q_target[2], q_target[2] - q_current[2],
               q_current[3], q_target[3], q_target[3] - q_current[3]);
-    }
-    
-    /* 对每个关节发送控制指令 */
-    const uint8_t joint_ids[4] = {
-        ROBSTRIDE_MOTOR_ID_JOINT1,
-        ROBSTRIDE_MOTOR_ID_JOINT2,
-        ROBSTRIDE_MOTOR_ID_JOINT3,
-        ROBSTRIDE_MOTOR_ID_JOINT4
-    };
-    
-    for (int i = 0; i < 4; i++) {
-        float kp = ctrl->config.playback.kp[i];
-        float kd = ctrl->config.playback.kd[i];
-        
-        /* 速度限幅 */
-        float v = v_target[i];
-        if (v > ctrl->config.max_velocity[i]) {
-            v = ctrl->config.max_velocity[i];
-        } else if (v < -ctrl->config.max_velocity[i]) {
-            v = -ctrl->config.max_velocity[i];
-        }
-        
-        /* 力矩限幅 */
-        float torque = tau_ff[i];
-        if (torque > ctrl->config.max_torque[i]) {
-            torque = ctrl->config.max_torque[i];
-        } else if (torque < -ctrl->config.max_torque[i]) {
-            torque = -ctrl->config.max_torque[i];
-        }
-        
-        /* 发送运控指令 */
-        fsp_err_t err = robstride_motion_control(joint_ids[i], q_target[i], v, kp, kd, torque);
-        if (err != FSP_SUCCESS) {
-            LOG_E("Playback cmd failed: joint=%u err=%d q=%.3f v=%.3f",
-                  (unsigned int)(i + 1),
-                  err,
-                  q_target[i],
-                  v);
-        }
     }
     
     /* 处理段边界事件（例如夹爪动作）
@@ -424,11 +387,19 @@ static void playback_control_loop(motion_controller_t *ctrl, float dt) {
             if ((prev_time < boundary_time) && (ctrl->seq_start_time >= boundary_time)) {
                 uint8_t action = ctrl->trajectory.segments[seg][0].action;
                 if (action == ACTION_GRIP) {
-                    /* TODO: 调用夹爪抓取函数 */
-                    LOG_I("Segment %lu: GRIP action triggered", (unsigned long)seg);
+                    fsp_err_t err = trigger_gripper_action(action);
+                    if (err == FSP_SUCCESS) {
+                        LOG_I("Segment %lu: GRIP action triggered", (unsigned long)seg);
+                    } else {
+                        LOG_E("Segment %lu: GRIP action failed, err=%d", (unsigned long)seg, err);
+                    }
                 } else if (action == ACTION_RELEASE) {
-                    /* TODO: 调用夹爪释放函数 */
-                    LOG_I("Segment %lu: RELEASE action triggered", (unsigned long)seg);
+                    fsp_err_t err = trigger_gripper_action(action);
+                    if (err == FSP_SUCCESS) {
+                        LOG_I("Segment %lu: RELEASE action triggered", (unsigned long)seg);
+                    } else {
+                        LOG_E("Segment %lu: RELEASE action failed, err=%d", (unsigned long)seg, err);
+                    }
                 }
             }
         }
@@ -438,7 +409,12 @@ static void playback_control_loop(motion_controller_t *ctrl, float dt) {
     if (seq_done) {
         LOG_I("Playback sequence completed");
         ctrl->seq_running = false;
-        capture_idle_hold_targets(ctrl);
+        if (!capture_idle_hold_targets(ctrl)) {
+            ctrl->state = MOTION_STATE_ERROR;
+            LOG_E("Playback completion rejected: capture abs failed");
+            return;
+        }
+        motion_adapter_force_persist_sector(&ctrl->adapter);
         ctrl->state = MOTION_STATE_IDLE;
     }
 }
@@ -446,48 +422,27 @@ static void playback_control_loop(motion_controller_t *ctrl, float dt) {
 /**
  * @brief IDLE保持模式控制循环（锁当前位置）
  */
-static void idle_control_loop(motion_controller_t *ctrl) {
+static void idle_control_loop(motion_controller_t *ctrl, float dt) {
     if (!ctrl->idle_hold_valid) {
-        capture_idle_hold_targets(ctrl);
+        if (!capture_idle_hold_targets(ctrl)) {
+            ctrl->state = MOTION_STATE_ERROR;
+            LOG_E("Idle control rejected: capture abs failed");
+            return;
+        }
     }
 
     float v_target[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-    float tau_ff[4] = {0};
-    float q_current[4] = {
-        g_motors[0].feedback.position,
-        g_motors[1].feedback.position,
-        g_motors[2].feedback.position,
-        g_motors[3].feedback.position
-    };
 
-    compute_gravity_compensation(ctrl, q_current, tau_ff);
-
-    const uint8_t joint_ids[4] = {
-        ROBSTRIDE_MOTOR_ID_JOINT1,
-        ROBSTRIDE_MOTOR_ID_JOINT2,
-        ROBSTRIDE_MOTOR_ID_JOINT3,
-        ROBSTRIDE_MOTOR_ID_JOINT4
-    };
-
-    for (int i = 0; i < 4; i++) {
-        float torque = tau_ff[i];
-        if (torque > ctrl->config.max_torque[i]) {
-            torque = ctrl->config.max_torque[i];
-        } else if (torque < -ctrl->config.max_torque[i]) {
-            torque = -ctrl->config.max_torque[i];
-        }
-
-        robstride_motion_control(joint_ids[i],
-                                 ctrl->idle_q_hold[i],
-                                 v_target[i],
-                                 ctrl->config.idle.kp[i],
-                                 ctrl->config.idle.kd[i],
-                                 torque);
+    motion_adapter_set_pd(&ctrl->adapter, ctrl->config.controller.kp, ctrl->config.controller.kd);
+    if (!motion_adapter_step(&ctrl->adapter, dt, ctrl->idle_q_hold, v_target, NULL, NULL, NULL)) {
+        LOG_E("Idle adapter step failed");
     }
 }
 
 /**
  * @brief 运控模式主控制循环
+ * @param ctrl 控制器实例指针
+ * @param dt 时间步长（秒）
  */
 void motion_ctrl_loop(motion_controller_t *ctrl, float dt) {
     if (ctrl == NULL || !ctrl->is_initialized || ctrl->emergency_stop) return;
@@ -495,7 +450,7 @@ void motion_ctrl_loop(motion_controller_t *ctrl, float dt) {
     
     switch (ctrl->state) {
         case MOTION_STATE_TEACHING:
-            teach_control_loop(ctrl);
+            teach_control_loop(ctrl, dt);
             break;
             
         case MOTION_STATE_PLAYBACK:
@@ -503,7 +458,7 @@ void motion_ctrl_loop(motion_controller_t *ctrl, float dt) {
             break;
             
         case MOTION_STATE_IDLE:
-            idle_control_loop(ctrl);
+            idle_control_loop(ctrl, dt);
             break;
 
         case MOTION_STATE_ERROR:
@@ -536,19 +491,8 @@ void motion_ctrl_set_grav_params(motion_controller_t *ctrl, const grav_param_t *
  */
 void motion_ctrl_set_teach_params(motion_controller_t *ctrl, const float kp[4], 
                                   const float kd[4], bool enable_joint1) {
-    if (ctrl == NULL) {
-        return;
-    }
-    
-    if (kp != NULL) {
-        memcpy(ctrl->config.teach.kp, kp, 4 * sizeof(float));
-    }
-    
-    if (kd != NULL) {
-        memcpy(ctrl->config.teach.kd, kd, 4 * sizeof(float));
-    }
-    
-    ctrl->config.teach.enable_joint1 = enable_joint1;
+    motion_ctrl_set_common_pd(ctrl, kp, kd);
+    (void)enable_joint1;
 }
 
 /**
@@ -556,9 +500,7 @@ void motion_ctrl_set_teach_params(motion_controller_t *ctrl, const float kp[4],
  */
 void motion_ctrl_set_playback_params(motion_controller_t *ctrl, const float kp[4], 
                                      const float kd[4]) {
-    if (ctrl == NULL) return;
-    if (kp != NULL) memcpy(ctrl->config.playback.kp, kp, 4 * sizeof(float));
-    if (kd != NULL) memcpy(ctrl->config.playback.kd, kd, 4 * sizeof(float));
+    motion_ctrl_set_common_pd(ctrl, kp, kd);
 }
 
 /**
@@ -583,9 +525,7 @@ void motion_ctrl_emergency_stop(motion_controller_t *ctrl) {
  * @brief 清除急停状态
  */
 void motion_ctrl_clear_emergency_stop(motion_controller_t *ctrl) {
-    if (ctrl == NULL || !ctrl->is_initialized) {
-        return;
-    }
+    if (ctrl == NULL || !ctrl->is_initialized) return;
     ctrl->emergency_stop = false;
     LOG_I("Emergency stop cleared");
 }

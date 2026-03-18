@@ -1,6 +1,8 @@
 /**
  * @file  wifi_debug_entry.c
  * @brief WiFi 调试任务入口（初始化 WiFi 模块 + NVM，循环处理 JSON 命令）
+ * @date  2026-02-11
+ * @author Ma Ziteng
  */
 
 #include <wifi_debug.h>
@@ -41,14 +43,26 @@ void wifi_debug_entry(void *pvParameters) {
 
         if (should_run && !wifi_running) {
             if (wifi_start_service()) {
+                g_teach_jog_cmd.active = false;
+                g_teach_jog_cmd.motor_id = 0U;
+                g_teach_jog_cmd.vel_centi_rad_s = 0;
+                g_teach_jog_cmd.last_update_tick = 0U;
                 wifi_running = true;
                 g_sys_status.is_wifi_connected = true;
                 LOG_I("WiFi service started for DEBUG mode.");
             } else {
+                g_teach_jog_cmd.active = false;
+                g_teach_jog_cmd.motor_id = 0U;
+                g_teach_jog_cmd.vel_centi_rad_s = 0;
+                g_teach_jog_cmd.last_update_tick = 0U;
                 g_sys_status.is_wifi_connected = false;
                 LOG_E("WiFi service start failed.");
             }
         } else if (!should_run && wifi_running) {
+            g_teach_jog_cmd.active = false;
+            g_teach_jog_cmd.motor_id = 0U;
+            g_teach_jog_cmd.vel_centi_rad_s = 0;
+            g_teach_jog_cmd.last_update_tick = 0U;
             if (!wifi_stop_service()) {
                 LOG_W("WiFi service stop reported warnings.");
             }

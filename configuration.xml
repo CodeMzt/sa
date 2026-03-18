@@ -714,6 +714,10 @@
       <property id="rtos.awsfreertos.object.binary_semaphore.symbol" value="audio_semaphore"/>
       <property id="rtos.awsfreertos.object.binary_semaphore.allocation" value="rtos.awsfreertos.object.binary_semaphore.allocation.static"/>
     </object>
+    <object id="rtos.awsfreertos.object.binary_semaphore.660390643">
+      <property id="rtos.awsfreertos.object.binary_semaphore.symbol" value="g_cfg_save_mutex"/>
+      <property id="rtos.awsfreertos.object.binary_semaphore.allocation" value="rtos.awsfreertos.object.binary_semaphore.allocation.static"/>
+    </object>
     <context id="_hal.0">
       <stack module="module.driver.ioport_on_ioport.0"/>
       <stack module="module.middleware.rm_freertos_port.0"/>

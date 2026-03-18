@@ -266,6 +266,38 @@ def main(page: ft.Page):
     motion_del_frame_btn = ft.Button("删除帧", icon=ft.Icons.REMOVE)
     motion_save_btn = ft.Button("保存到设备", icon=ft.Icons.SAVE)
 
+    JOG_SPEED_OPTIONS = [i * 0.05 for i in range(1, 11)]
+    JOG_SPEED_DEFAULT = 0.05
+    JOG_PERIOD_S = 0.10
+    jog_motor_dd = ft.Dropdown(
+        label="电机",
+        value="1",
+        width=160,
+        options=[
+            ft.dropdown.Option("1", "J1"),
+            ft.dropdown.Option("2", "J2"),
+            ft.dropdown.Option("3", "J3"),
+            ft.dropdown.Option("4", "J4"),
+            ft.dropdown.Option("5", "GRIPPER"),
+        ],
+        border_color=ACCENT_DIM,
+        focused_border_color=ACCENT,
+    )
+    jog_speed_dd = ft.Dropdown(
+        label="速度(rad/s)",
+        value=f"{JOG_SPEED_DEFAULT:.2f}",
+        width=150,
+        options=[
+            ft.dropdown.Option(f"{s:.2f}", f"{s:.2f}")
+            for s in JOG_SPEED_OPTIONS
+        ],
+        border_color=ACCENT_DIM,
+        focused_border_color=ACCENT,
+    )
+    jog_status_text = ft.Text("状态: 停止 | 速度 0.05 rad/s", size=12, color=TEXT_DIM)
+    jog_state = {"active": False, "motor_id": 1, "direction": 0, "speed": JOG_SPEED_DEFAULT}
+    jog_stop_event = {"evt": threading.Event()}
+
     if is_mobile:
         port_input.width = None
         port_input.expand = True
@@ -277,6 +309,12 @@ def main(page: ft.Page):
         frame_dur.expand = True
         frame_act.width = None
         frame_act.expand = True
+        jog_motor_dd.width = None
+        jog_motor_dd.expand = True
+        jog_speed_dd.width = None
+        jog_speed_dd.expand = True
+        motion_add_frame_btn.expand = True
+        motion_del_frame_btn.expand = True
 
     def _safe_float(s, default=0.0):
         try:
@@ -586,23 +624,29 @@ def main(page: ft.Page):
         pending_cmd["name"] = None
 
     # ---- 通用发送 ----
-    def send_cmd(cmd_dict):
+    def send_cmd(cmd_dict, expect_response=True, log_tx=True, silent_error=False):
         global is_connected
         if not is_connected:
-            ui_conn_log("⚠ 未连接，请先连接设备", color="#FFB74D")
-            toast("未连接，请先连接设备", "#E65100")
-            return
+            if not silent_error:
+                ui_conn_log("⚠ 未连接，请先连接设备", color="#FFB74D")
+                toast("未连接，请先连接设备", "#E65100")
+            return False
         try:
             payload = json.dumps(cmd_dict, separators=(',', ':')) + "\r\n"
             tcp_client.send(payload.encode("utf-8"))
-            ui_conn_log(f"Tx {payload.strip()}", color=ACCENT)
-            # 运动配置数据量大（~6KB hex），给更长超时
-            cmd_name = cmd_dict.get("cmd", "unknown")
-            timeout = 15 if cmd_name in ("read_motion_cfg", "write_motion_cfg", "read_log") else 5
-            _start_timeout(cmd_name, timeout)
+            if log_tx:
+                ui_conn_log(f"Tx {payload.strip()}", color=ACCENT)
+            if expect_response:
+                # 运动配置数据量大（~6KB hex），给更长超时
+                cmd_name = cmd_dict.get("cmd", "unknown")
+                timeout = 15 if cmd_name in ("read_motion_cfg", "write_motion_cfg", "read_log") else 5
+                _start_timeout(cmd_name, timeout)
+            return True
         except Exception as ex:
-            ui_conn_log(f"✖ Tx 失败: {ex}", color="#EF5350")
-            toast(f"发送失败: {ex}", "#C62828")
+            if not silent_error:
+                ui_conn_log(f"✖ Tx 失败: {ex}", color="#EF5350")
+                toast(f"发送失败: {ex}", "#C62828")
+            return False
 
     # ---- 从缓冲区提取完整 JSON 对象（花括号配对，不依赖 \n 分隔） ----
     def _extract_json(buf):
@@ -725,6 +769,7 @@ def main(page: ft.Page):
                 print(f"[RX EXCEPTION] {rx_err}")
                 break
         is_connected = False
+        jog_release(send_stop=False)
         print("[RX] receive_data thread exiting")
         ui_conn_log("连接已断开", color="#EF5350")
         toast("连接已断开", "#C62828")
@@ -734,6 +779,7 @@ def main(page: ft.Page):
     def connect_click(e):
         global is_connected, tcp_client
         if is_connected:
+            jog_release(send_stop=True)
             try:
                 tcp_client.close()
             except Exception:
@@ -939,6 +985,128 @@ def main(page: ft.Page):
         log_text.value = ""
         page.update()
 
+    def _selected_jog_motor_id():
+        return max(1, min(5, _safe_int(jog_motor_dd.value, 1)))
+
+    def _selected_jog_speed():
+        speed = _safe_float(jog_speed_dd.value, JOG_SPEED_DEFAULT)
+        speed = max(0.05, min(0.5, speed))
+        return round(speed, 2)
+
+    def _set_jog_status(text, color=TEXT_DIM):
+        jog_status_text.value = f"状态: {text} | 速度 {_selected_jog_speed():.2f} rad/s"
+        jog_status_text.color = color
+
+    def _send_teach_jog(motor_id, vel, log_tx=False, silent_error=False):
+        return send_cmd(
+            {"cmd": "teach_jog", "motor_id": int(motor_id), "vel": float(vel)},
+            expect_response=False,
+            log_tx=log_tx,
+            silent_error=silent_error,
+        )
+
+    def jog_release(send_stop=True):
+        was_active = jog_state["active"]
+        motor_id = jog_state["motor_id"]
+
+        jog_state["active"] = False
+        jog_state["direction"] = 0
+        jog_stop_event["evt"].set()
+
+        if send_stop and was_active and is_connected:
+            _send_teach_jog(motor_id, 0.0, log_tx=True, silent_error=False)
+
+        _set_jog_status("停止", TEXT_DIM)
+        page.update()
+
+    def jog_press(direction):
+        if direction not in (-1, 1):
+            return
+
+        if not is_connected:
+            toast("未连接，无法遥控电机", "#E65100")
+            return
+
+        motor_id = _selected_jog_motor_id()
+        speed = _selected_jog_speed()
+        if (jog_state["active"] and
+                jog_state["direction"] == direction and
+                jog_state["motor_id"] == motor_id and
+                abs(jog_state["speed"] - speed) < 1e-6):
+            return
+
+        jog_release(send_stop=True)
+
+        jog_state["active"] = True
+        jog_state["motor_id"] = motor_id
+        jog_state["direction"] = direction
+        jog_state["speed"] = speed
+
+        jog_stop_event["evt"] = threading.Event()
+        stop_evt = jog_stop_event["evt"]
+        target_vel = speed * direction
+
+        _send_teach_jog(motor_id, target_vel, log_tx=True, silent_error=False)
+
+        dir_text = "正向" if direction > 0 else "反向"
+        _set_jog_status(f"{dir_text}运行 M{motor_id} ({target_vel:+.2f} rad/s)", "#81C784")
+        page.update()
+
+        def _repeat_send():
+            while not stop_evt.wait(JOG_PERIOD_S):
+                if not is_connected:
+                    break
+                _send_teach_jog(motor_id, target_vel, log_tx=False, silent_error=True)
+
+        page.run_thread(_repeat_send)
+
+    def on_jog_motor_change(e):
+        jog_state["motor_id"] = _selected_jog_motor_id()
+        if jog_state["active"]:
+            jog_release(send_stop=True)
+
+    def on_jog_speed_change(e):
+        if jog_state["active"]:
+            jog_press(jog_state["direction"])
+        else:
+            _set_jog_status("停止", TEXT_DIM)
+            page.update()
+
+    jog_motor_dd.on_change = on_jog_motor_change
+    jog_speed_dd.on_change = on_jog_speed_change
+
+    def _jog_hold_button(label, direction, bg_color):
+        btn_content = ft.Container(
+            content=ft.Column([
+                ft.Icon(ft.Icons.SYNC, color="white", size=18 if is_mobile else 20),
+                ft.Text(label, color="white", size=13 if is_mobile else 14, weight=ft.FontWeight.W_600),
+            ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=6),
+            bgcolor=bg_color,
+            border_radius=10,
+            padding=ft.Padding(left=10, right=10, top=12, bottom=12),
+            expand=True,
+            height=84 if is_mobile else 92,
+        )
+
+        try:
+            return ft.GestureDetector(
+                on_tap_down=lambda e: jog_press(direction),
+                on_tap_up=lambda e: jog_release(send_stop=True),
+                on_tap_cancel=lambda e: jog_release(send_stop=True),
+                content=btn_content,
+            )
+        except TypeError:
+            return ft.GestureDetector(
+                on_tap_down=lambda e: jog_press(direction),
+                on_tap_up=lambda e: jog_release(send_stop=True),
+                content=btn_content,
+            )
+
+    jog_forward_btn = _jog_hold_button("按住正转", 1, "#1E5A8A")
+    jog_reverse_btn = _jog_hold_button("按住反转", -1, "#8A3E1E")
+    jog_forward_wrap = ft.Container(content=jog_forward_btn, expand=True)
+    jog_reverse_wrap = ft.Container(content=jog_reverse_btn, expand=True)
+
     # ---- 按钮组件 ----
     connect_btn = ft.Button(
         "连接设备", icon=ft.Icons.WIFI,
@@ -1130,6 +1298,33 @@ def main(page: ft.Page):
         border=ft.Border.all(1, "#2A2A3E"),
     )
 
+    jog_controls_mobile = [
+        ft.Text("电机遥控", size=13, weight=ft.FontWeight.W_600, color=TEXT_DIM),
+        ft.Row([jog_motor_dd], spacing=10),
+        ft.Row([jog_speed_dd], spacing=10),
+        ft.Row([jog_status_text], spacing=10),
+        ft.Row([jog_forward_wrap], spacing=10),
+        ft.Row([jog_reverse_wrap], spacing=10),
+        ft.Text("按住按钮持续转动，松开立即停止；速度由上方下拉框设置。", size=11, color=TEXT_DIM),
+    ]
+
+    jog_controls_desktop = [
+        ft.Text("电机遥控", size=13, weight=ft.FontWeight.W_600, color=TEXT_DIM),
+        ft.Row([
+            jog_motor_dd,
+            jog_speed_dd,
+            ft.Container(content=jog_status_text, expand=True),
+        ], spacing=10),
+        ft.Row([jog_forward_wrap, jog_reverse_wrap], spacing=10),
+        ft.Text("按住按钮持续转动，松开立即停止；速度由上方下拉框设置。", size=11, color=TEXT_DIM),
+    ]
+
+    jog_card = ft.Container(
+        content=ft.Column(jog_controls_mobile if is_mobile else jog_controls_desktop, spacing=10, expand=True),
+        bgcolor=BG_CARD, border_radius=12, padding=16, expand=True,
+        border=ft.Border.all(1, "#2A2A3E"),
+    )
+
     log_card = ft.Container(
         content=ft.Column([
             ft.Row([
@@ -1155,26 +1350,54 @@ def main(page: ft.Page):
     content_holder = ft.Container(content=ft.Column([conn_card, ft.Container(height=8), conn_log_card], expand=True, spacing=8), expand=True)
 
     def switch_tab(tab_key):
+        if tab_key != "电机遥控" and jog_state["active"]:
+            jog_release(send_stop=True)
+
         if tab_key == "连接":
             content_holder.content = ft.Column([conn_card, ft.Container(height=8), conn_log_card], expand=True, spacing=8)
         elif tab_key == "系统配置":
             content_holder.content = sys_card
         elif tab_key == "运动配置":
             content_holder.content = motion_card
+        elif tab_key == "电机遥控":
+            content_holder.content = jog_card
         else:
             content_holder.content = log_card
         page.update()
 
-    tab_bar = ft.Row(
-        [
-            ft.Button("连接", on_click=lambda e: switch_tab("连接"), expand=True),
-            ft.Button("系统配置", on_click=lambda e: switch_tab("系统配置"), expand=True),
-            ft.Button("运动配置", on_click=lambda e: switch_tab("运动配置"), expand=True),
-            ft.Button("日志", on_click=lambda e: switch_tab("日志"), expand=True),
-        ],
-        spacing=6,
-        wrap=False,
-    )
+    def _tab_button(label, tab_key):
+        return ft.Button(
+            label,
+            on_click=lambda e, key=tab_key: switch_tab(key),
+            expand=True,
+            height=40,
+            bgcolor=BG_CARD,
+            color="white",
+            style=ft.ButtonStyle(
+                shape=ft.RoundedRectangleBorder(radius=8),
+                side=ft.BorderSide(1, ACCENT_DIM),
+            ),
+        )
+
+    tab_btn_conn = _tab_button("连接", "连接")
+    tab_btn_sys = _tab_button("系统" if is_mobile else "系统配置", "系统配置")
+    tab_btn_motion = _tab_button("运动" if is_mobile else "运动配置", "运动配置")
+    tab_btn_jog = _tab_button("遥控" if is_mobile else "电机遥控", "电机遥控")
+    tab_btn_log = _tab_button("日志", "日志")
+
+    if is_mobile:
+        tab_bar = ft.Column(
+            [
+                ft.Row([tab_btn_conn, tab_btn_sys, tab_btn_motion], spacing=6),
+                ft.Row([tab_btn_jog, tab_btn_log], spacing=6),
+            ],
+            spacing=6,
+        )
+    else:
+        tab_bar = ft.Row(
+            [tab_btn_conn, tab_btn_sys, tab_btn_motion, tab_btn_jog, tab_btn_log],
+            spacing=6,
+        )
 
     # 主内容列
     main_col = ft.Column(

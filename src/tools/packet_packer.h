@@ -1,8 +1,8 @@
-/*
- * packet_packer.h
- *
- *  Created on: 2026年1月25日
- *      Author: Ma Ziteng
+/**
+ * @file    packet_packer.h
+ * @brief   数据包打包工具头文件（协议结构定义）
+ * @date    2026-01-25
+ * @author  Ma Ziteng
  */
 
 #ifndef PACKET_PACKER_H_

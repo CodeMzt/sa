@@ -1,16 +1,15 @@
-/*
- * robstride_motor.h
+/**
+ * @file robstride_motor.h
+ * @brief RobStride EL05 关节电机 CAN 通信协议层头文件
+ * @date 2026-02-24
+ * @author Ma Ziteng
  *
- *  Created on: 2026年2月24日
- *      Author: Ma Ziteng
+ * 支持私有协议（扩展帧，1Mbps）
  *
- *  RobStride EL05 关节电机 CAN 通信协议层
- *  支持私有协议（扩展帧，1Mbps）
- *
- *  CAN 扩展帧 29位ID 格式：
- *    Bit28~Bit24 : 通信类型 (5bit)
- *    Bit23~Bit8  : 数据区2 / 主机ID等 (16bit)
- *    Bit7~Bit0   : 目标电机 CAN_ID (8bit)
+ * CAN 扩展帧 29位ID 格式：
+ *   Bit28~Bit24 : 通信类型 (5bit)
+ *   Bit23~Bit8  : 数据区2 / 主机ID等 (16bit)
+ *   Bit7~Bit0   : 目标电机 CAN_ID (8bit)
  */
 
 #ifndef ROBSTRIDE_MOTOR_H_
@@ -35,6 +34,16 @@
 
 /** 电机总数 */
 #define ROBSTRIDE_MOTOR_NUM         (5U)
+
+/* 关节侧与电机侧角度/角速度换算比（关节1~4=20，夹爪=1） */
+#define ROBSTRIDE_GEAR_RATIO_JOINT_DEFAULT   (20.0f)
+#define ROBSTRIDE_GEAR_RATIO_GRIPPER_DEFAULT (1.0f)
+
+/* 夹爪默认角度语义：0=闭合，角度增大=张开 */
+#define ROBSTRIDE_GRIPPER_CLOSED_POS_RAD  (0.0f)
+#define ROBSTRIDE_GRIPPER_RELEASE_POS_RAD (0.6f)
+
+#define AUTO_REPORT_INTERVAL_MS (10U)  /* 电机主动上报周期 */
 
 /* ============================================================
  *  物理量范围（用于 float <-> uint16 线性映射）
@@ -131,8 +140,8 @@ typedef enum {
  *  电机反馈数据结构体
  * ============================================================ */
 typedef struct {
-    float    position;      /* 当前角度 rad，范围 -4π ~ +4π */
-    float    velocity;      /* 当前角速度 rad/s */
+    float    position;      /* 当前角度 rad（关节1~4为关节侧，夹爪为电机侧） */
+    float    velocity;      /* 当前角速度 rad/s（关节1~4为关节侧，夹爪为电机侧） */
     float    torque;        /* 当前力矩 Nm */
     float    temperature;   /* 当前温度 °C */
     uint8_t  mode_state;    /* 模式状态，见 robstride_motor_state_t */
@@ -146,6 +155,9 @@ typedef struct {
     uint8_t              can_id;    /* 电机 CAN ID */
     robstride_feedback_t feedback;  /* 最新反馈数据 */
 } robstride_motor_t;
+
+/* 每个电机的减速比：索引0~3对应关节1~4，索引4对应夹爪 */
+extern const float g_motor_gear_ratio[ROBSTRIDE_MOTOR_NUM];
 
 /* ============================================================
  *  底层通信函数（直接对应手册通信类型）
@@ -213,8 +225,8 @@ fsp_err_t robstride_save_config(uint8_t motor_id);
 /**
  * @brief  通信类型1：运控模式电机控制指令（5参数）
  * @param  motor_id      目标电机 CAN ID
- * @param  position      目标角度 rad
- * @param  velocity      目标角速度 rad/s
+ * @param  position      目标角度 rad（关节侧）
+ * @param  velocity      目标角速度 rad/s（关节侧）
  * @param  kp            位置增益 Kp (0~500)
  * @param  kd            阻尼增益 Kd (0~5)
  * @param  torque_ff     力矩前馈 Nm (-6~6)
@@ -294,7 +306,7 @@ fsp_err_t robstride_set_current(uint8_t motor_id, float iq_ref);
 /**
  * @brief  夹爪运控模式：柔顺抓取
  * @param  motor_id       夹爪电机 CAN ID
- * @param  close_position 闭合目标位置 rad（正值为闭合方向）
+ * @param  close_position 抓取目标位置 rad（默认闭合位置为0）
  * @param  kp             位置刚度 (0~500)，越大夹持力越大
  * @param  kd             阻尼 (0~5)，防止振荡
  * @param  torque_ff      力矩前馈 Nm，可用于主动施加夹持力
@@ -307,7 +319,7 @@ fsp_err_t robstride_gripper_grasp(uint8_t motor_id,
                                   float   torque_ff);
 
 /**
- * @brief  夹爪运控模式：松开（回到零位）
+ * @brief  夹爪运控模式：松开（移动到默认张开角）
  * @param  motor_id  夹爪电机 CAN ID
  * @param  kp        位置刚度
  * @param  kd        阻尼

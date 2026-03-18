@@ -1,8 +1,8 @@
 /**
  * @file    drv_i2c_touchpad.c
- * @brief   FT5x06 I2C 触摸驱动
- * @author  Ma Ziteng(参考百问网的驱动编写)
+ * @brief   FT5x06 I2C 触摸驱动实现
  * @date    2026-01-27
+ * @author  Ma Ziteng
  */
 
 #include "drv_i2c_touchpad.h"
@@ -53,11 +53,9 @@ static touch_dev_t g_touch_dev = {
 
 void i2c_master2_callback(i2c_master_callback_args_t * p_args)
 {
-    if (I2C_MASTER_EVENT_TX_COMPLETE == p_args->event) {
-        g_i2c_tx_cplt = true;
-    } else if (I2C_MASTER_EVENT_RX_COMPLETE == p_args->event) {
-        g_i2c_rx_cplt = true;
-    } else {
+    if (I2C_MASTER_EVENT_TX_COMPLETE == p_args->event) g_i2c_tx_cplt = true;
+    else if (I2C_MASTER_EVENT_RX_COMPLETE == p_args->event) g_i2c_rx_cplt = true;
+    else {
         /* Error handling: force flags to avoid deadlock */
         g_i2c_tx_cplt = true;
         g_i2c_rx_cplt = true;
@@ -235,15 +233,11 @@ static bool ft5x06_read(touch_dev_t *dev, touch_monitor_t *data)
     read_reg(REG_FT5X06_TD_STATUS, &reg_val, 1);
 
     uint8_t point_count = reg_val & 0x0F;
-    if (point_count > TOUCH_MAX_POINTS) {
-        point_count = TOUCH_MAX_POINTS;
-    }
+    if (point_count > TOUCH_MAX_POINTS) point_count = TOUCH_MAX_POINTS;
 
     data->count = point_count;
 
-    if (point_count == 0) {
-        return true;
-    }
+    if (point_count == 0) return true;
 
     uint8_t buf[TOUCH_MAX_POINTS * BYTES_PER_POINT];
     read_reg(REG_FT5X06_TOUCH1_XH, buf, point_count * BYTES_PER_POINT);

@@ -1,8 +1,8 @@
 /**
  * @file    drv_spi_display.c
  * @brief   ST7796S SPI LCD 屏幕驱动 (RTOS 信号量优化版)
- * @author  Ma Ziteng(参考百问网的驱动编写)
  * @date    2026-01-27
+ * @author  Ma Ziteng
  */
 
 #include "drv_spi_display.h"
@@ -62,9 +62,7 @@ void spi1_callback(spi_callback_args_t *p_args)
         (SPI_EVENT_TRANSFER_ABORTED == p_args->event) ||
         (SPI_EVENT_ERR_MODE_FAULT == p_args->event))
     {
-        if (g_spi_sem != NULL) {
-            xSemaphoreGiveFromISR(g_spi_sem, &xHigherPriorityTaskWoken);
-        }
+        if (g_spi_sem != NULL) xSemaphoreGiveFromISR(g_spi_sem, &xHigherPriorityTaskWoken);
     }
 
     portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
@@ -87,16 +85,11 @@ fsp_err_t lcd_spi_init(void)
 
     if (g_spi_sem == NULL) {
         g_spi_sem = xSemaphoreCreateBinary();
-        if (g_spi_sem == NULL) {
-            return FSP_ERR_OUT_OF_MEMORY;
-        }
+        if (g_spi_sem == NULL) return FSP_ERR_OUT_OF_MEMORY;
     }
 
     err = LCD_SPI_INSTANCE.p_api->open(&g_spi1_ctrl, &g_spi1_cfg);
-    if (FSP_SUCCESS != err && FSP_ERR_ALREADY_OPEN != err)
-    {
-        return err;
-    }
+    if (FSP_SUCCESS != err && FSP_ERR_ALREADY_OPEN != err) return err;
 
     lcd_hw_reset();
     lcd_backlight_on();
@@ -138,9 +131,7 @@ fsp_err_t lcd_spi_init(void)
     lcd_spi_set_window(0, 0, LCD_WIDTH - 1, LCD_HEIGHT - 1);
 
     uint8_t line_buf[320 * 2] = {0};
-    for (int y = 0; y < LCD_HEIGHT; y++) {
-        lcd_spi_flush_data(line_buf, sizeof(line_buf));
-    }
+    for (int y = 0; y < LCD_HEIGHT; y++) lcd_spi_flush_data(line_buf, sizeof(line_buf));
 
     return FSP_SUCCESS;
 }
@@ -197,10 +188,7 @@ fsp_err_t lcd_spi_flush_data(uint8_t *data, uint32_t len)
  */
 static fsp_err_t wait_transfer_complete(void)
 {
-    if (xSemaphoreTake(g_spi_sem, pdMS_TO_TICKS(50)) == pdTRUE)
-    {
-        return FSP_SUCCESS;
-    }
+    if (xSemaphoreTake(g_spi_sem, pdMS_TO_TICKS(50)) == pdTRUE) return FSP_SUCCESS;
 
     return FSP_ERR_TIMEOUT;
 }

@@ -1,10 +1,8 @@
-/*
- * can_comms_entry.c
- *
- *   Created on: 2026年1月24日
- *       Author: Ma Ziteng
- *  Description: can通信任务，用于接收电机数据以及发送控制指令。
- *               集成运控模式下的机械臂示教/回放控制。
+/**
+ * @file  can_comms_entry.c
+ * @brief CAN 通信任务入口（电机初始化、动作调度、示教/回放逻辑）
+ * @date  2026-01-24
+ * @author Ma Ziteng
  */
 
 #include "can_comms_entry.h"
@@ -19,6 +17,7 @@
 #include <math.h>
 
 #define PLAYBACK_CHAIN_LEN 3U
+#define TEACH_JOG_TIMEOUT_MS (300U)
 
 /* 回放执行上下文结构体 */
 typedef struct {
@@ -30,6 +29,7 @@ typedef struct {
 } playback_exec_ctx_t;
 
 static playback_exec_ctx_t g_playback_ctx = {0};
+static uint8_t g_last_jog_motor_id = 0U;
 
 /* 动作序列映射：FORCEPS->[0,1,6], HEMOSTAT->[2,3,6], SCALPEL->[4,5,6] */
 static const uint8_t g_group_chain_map[4][PLAYBACK_CHAIN_LEN] = {
@@ -39,6 +39,37 @@ static const uint8_t g_group_chain_map[4][PLAYBACK_CHAIN_LEN] = {
     {4U, 5U, 6U}
 };
 
+static void apply_joint_current_limits_from_nvm(void) {
+    const sys_config_t *sys_cfg = nvm_get_sys_config();
+    const uint8_t joint_ids[4] = {
+        ROBSTRIDE_MOTOR_ID_JOINT1,
+        ROBSTRIDE_MOTOR_ID_JOINT2,
+        ROBSTRIDE_MOTOR_ID_JOINT3,
+        ROBSTRIDE_MOTOR_ID_JOINT4
+    };
+
+    if (sys_cfg == NULL) {
+        LOG_E("Current limit apply skipped: sys config unavailable");
+        return;
+    }
+
+    for (uint8_t i = 0U; i < 4U; i++) {
+        float limit_cur_a = ((float)sys_cfg->current_limit[i]) * 0.01f;
+        fsp_err_t err = robstride_write_param_float(joint_ids[i], ROBSTRIDE_PARAM_LIMIT_CUR, limit_cur_a);
+        if (err != FSP_SUCCESS) {
+            LOG_E("Current limit apply failed: motor=%u limit=%.2fA err=%d",
+                  (unsigned int)joint_ids[i],
+                  limit_cur_a,
+                  err);
+            continue;
+        }
+
+        LOG_I("Current limit applied: motor=%u limit=%.2fA",
+              (unsigned int)joint_ids[i],
+              limit_cur_a);
+        vTaskDelay(2);
+    }
+}
 
 /**
  * @brief  初始化所有关节电机（运控模式）
@@ -76,30 +107,16 @@ static void init_motion_config(motion_ctrl_config_t *config) {
     /* 使用默认配置 */
     memset(config, 0, sizeof(motion_ctrl_config_t));
     
-    /* 示教模式参数 */
+    /* 三模式共用控制器参数 */
     for (int i = 0; i < 4; i++) {
-        config->teach.kp[i] = 0.0f;      /* 零刚度 */
-        config->teach.kd[i] = 0.0f;      /* 中等阻尼 */
-    }
-    config->teach.enable_joint1 = true;  /* 默认关节1参与拖动 */
-    config->teach.joint1_kd = 0.5f;
-    
-    /* 回放模式参数 */
-    for (int i = 0; i < 4; i++) {
-        config->playback.kp[i] = 50.0f;  /* 中等刚度 */
-        config->playback.kd[i] = 1.0f;   /* 中等阻尼 */
-    }
-
-    /* IDLE保持模式参数 */
-    for (int i = 0; i < 4; i++) {
-        config->idle.kp[i] = 10.0f;     /* 刚度 */
-        config->idle.kd[i] = 1.0f;       /* 阻尼 */
+        config->controller.kp[i] = 8.0f;
+        config->controller.kd[i] = 0.5f;
     }
     
     /* 安全参数 */
     for (int i = 0; i < 4; i++) {
         config->max_torque[i] = 6.0f;    /* 最大力矩 */
-        config->max_velocity[i] = 10.0f; /* 最大速度 */
+        config->max_velocity[i] = 0.8f; /* 最大速度（关节侧rad/s，减速比换算前） */
     }
     
     /* 初始化重力补偿参数 */
@@ -115,6 +132,90 @@ static void reset_pb_ctx(void) {
     g_playback_ctx.queue_warned = false;
     g_playback_ctx.current_inst = INSTRUMENT_NONE;
     g_playback_ctx.stage = 0U;
+}
+
+static bool is_teach_jog_motor_valid(uint8_t motor_id) {
+    return (motor_id >= ROBSTRIDE_MOTOR_ID_JOINT1) && (motor_id <= ROBSTRIDE_MOTOR_ID_GRIPPER);
+}
+
+static void teach_jog_apply_stop(uint8_t motor_id) {
+    if (!is_teach_jog_motor_valid(motor_id)) return;
+    (void)robstride_set_speed(motor_id, 0.0f, 0.0f, 0.0f);
+}
+
+static void clear_teach_jog_cmd(bool stop_last_motor) {
+    uint8_t motor_id = g_last_jog_motor_id;
+
+    g_teach_jog_cmd.active = false;
+    g_teach_jog_cmd.motor_id = 0U;
+    g_teach_jog_cmd.vel_centi_rad_s = 0;
+    g_teach_jog_cmd.last_update_tick = 0U;
+
+    if (stop_last_motor && is_teach_jog_motor_valid(motor_id)) {
+        teach_jog_apply_stop(motor_id);
+    }
+
+    g_last_jog_motor_id = 0U;
+}
+
+static bool handle_teach_jog_mode(void) {
+    bool active = g_teach_jog_cmd.active;
+    uint8_t motor_id = g_teach_jog_cmd.motor_id;
+    int16_t vel_centi = g_teach_jog_cmd.vel_centi_rad_s;
+    uint32_t last_update_tick = g_teach_jog_cmd.last_update_tick;
+    uint32_t now_tick = (uint32_t)xTaskGetTickCount();
+
+    if (!active) {
+        if (g_last_jog_motor_id != 0U) {
+            teach_jog_apply_stop(g_last_jog_motor_id);
+            g_last_jog_motor_id = 0U;
+        }
+        return false;
+    }
+
+    if (!is_teach_jog_motor_valid(motor_id)) {
+        LOG_W("Teach jog rejected: invalid motor id %u", (unsigned int)motor_id);
+        clear_teach_jog_cmd(true);
+        return true;
+    }
+
+    if ((uint32_t)(now_tick - last_update_tick) > (uint32_t)pdMS_TO_TICKS(TEACH_JOG_TIMEOUT_MS)) {
+        LOG_W("Teach jog timeout: motor=%u", (unsigned int)motor_id);
+        clear_teach_jog_cmd(true);
+        return true;
+    }
+
+    if (vel_centi == 0) {
+        clear_teach_jog_cmd(true);
+        return true;
+    }
+
+    if (g_last_jog_motor_id != 0U && g_last_jog_motor_id != motor_id) {
+        teach_jog_apply_stop(g_last_jog_motor_id);
+    }
+
+    if (g_last_jog_motor_id != motor_id) {
+        robstride_stop(motor_id);
+        (void)robstride_set_run_mode(motor_id, ROBSTRIDE_MODE_SPEED);
+        robstride_enable(motor_id);
+        g_last_jog_motor_id = motor_id;
+        LOG_I("Teach jog active on motor %u", (unsigned int)motor_id);
+    }
+
+    if (g_sys_status.is_voice_command_running) {
+        g_sys_status.is_voice_command_running = false;
+        R_BSP_IrqDisable(g_i2s0_cfg.rxi_irq);
+    }
+
+    g_sys_status.is_running = false;
+    reset_pb_ctx();
+
+    if (g_motion_ctrl.state != MOTION_STATE_IDLE) {
+        motion_ctrl_stop(&g_motion_ctrl);
+    }
+
+    (void)robstride_set_speed(motor_id, ((float)vel_centi) * 0.01f, 0.0f, 0.0f);
+    return true;
 }
 
 /**
@@ -137,9 +238,7 @@ static bool pause_voice(void) {
  * @brief 回放结束后恢复语音识别
  */
 static void resume_voice(void) {
-    if (!g_playback_ctx.voice_paused) {
-        return;
-    }
+    if (!g_playback_ctx.voice_paused) return;
 
     if (g_sys_status.is_running && !g_sys_status.is_emergency_stop) {
         g_sys_status.is_voice_command_running = true;
@@ -159,9 +258,7 @@ static void resume_voice(void) {
  * @retval false 启动失败
  */
 static bool start_group(const motion_config_t *cfg, uint8_t group_idx) {
-    if (cfg == NULL || group_idx >= TOTAL_ACTION_GROUPS) {
-        return false;
-    }
+    if (cfg == NULL || group_idx >= TOTAL_ACTION_GROUPS) return false;
 
     const action_sequence_t *seq = &cfg->groups[group_idx];
     if (seq->frame_count < 2U || seq->frame_count > MAX_FRAMES_PER_SEQ) {
@@ -169,7 +266,6 @@ static bool start_group(const motion_config_t *cfg, uint8_t group_idx) {
         return false;
     }
 
-    // 开始回放
     if (!motion_ctrl_start_playback(&g_motion_ctrl, seq)) {
         LOG_E("Failed to start playback for group[%u]", group_idx);
         return false;
@@ -185,9 +281,7 @@ static bool start_group(const motion_config_t *cfg, uint8_t group_idx) {
  * @retval false 队列为空或无效
  */
 static bool load_next_inst(void) {
-    if (g_sys_status.act_queue_count == 0U) {
-        return false;
-    }
+    if (g_sys_status.act_queue_count == 0U) return false;
 
     instrument_t inst = g_sys_status.act_queue[0];
     if (inst < INSTRUMENT_FORCEPS || inst > INSTRUMENT_SCALPEL) {
@@ -212,19 +306,13 @@ static bool load_next_inst(void) {
  * @param cfg 运动配置数据
  */
 static void sched_playback(const motion_config_t *cfg) {
-    if (cfg == NULL) {
-        return;
-    }
+    if (cfg == NULL) return;
 
     /* 正在回放，等待完成 */
-    if (g_motion_ctrl.state == MOTION_STATE_PLAYBACK) {
-        return;
-    }
+    if (g_motion_ctrl.state == MOTION_STATE_PLAYBACK) return;
 
     /* 示教模式下不进入回放调度 */
-    if (g_motion_ctrl.state == MOTION_STATE_TEACHING) {
-        return;
-    }
+    if (g_motion_ctrl.state == MOTION_STATE_TEACHING) return;
 
     /* 空队列时仅在需要时恢复语音 */
     if (g_sys_status.act_queue_count == 0U && !g_playback_ctx.active) {
@@ -238,9 +326,7 @@ static void sched_playback(const motion_config_t *cfg) {
 
     /* 取新队首器械并准备三段序列 */
     if (!g_playback_ctx.active) {
-        if (!load_next_inst()) {
-            return;
-        }
+        if (!load_next_inst()) return;
         pause_voice();
     }
 
@@ -254,9 +340,7 @@ static void sched_playback(const motion_config_t *cfg) {
         g_playback_ctx.current_inst = INSTRUMENT_NONE;
         g_playback_ctx.stage = 0U;
 
-        if (g_sys_status.act_queue_count == 0U) {
-            resume_voice();
-        }
+        if (g_sys_status.act_queue_count == 0U) resume_voice();
         return;
     }
 
@@ -266,9 +350,8 @@ static void sched_playback(const motion_config_t *cfg) {
           (unsigned int)(g_playback_ctx.stage + 1U),
           (unsigned int)PLAYBACK_CHAIN_LEN,
           (unsigned int)group_idx);
-    if (start_group(cfg, group_idx)) {
-        g_playback_ctx.stage++;
-    } else {
+    if (start_group(cfg, group_idx)) g_playback_ctx.stage++;
+    else {
         LOG_E("Skip instrument %d due to playback start failure", g_playback_ctx.current_inst);
         remove_instrument_from_queue(0U);
         update_queue_display_string();
@@ -309,6 +392,7 @@ void user_on_emergency_stop(void) {
     g_sys_status.is_running = false;
     g_sys_status.is_voice_command_running = false;
     R_BSP_IrqDisable(g_i2s0_cfg.rxi_irq);
+    clear_teach_jog_cmd(true);
     reset_pb_ctx();
     LOG_E("Emergency stop requested from UI");
 }
@@ -320,40 +404,11 @@ void user_on_estop_reset(void) {
 }
 
 void user_on_teach_enter(void) {
-    if (g_sys_status.is_emergency_stop) {
-        LOG_W("Teach mode enter ignored: emergency stop active");
-        return;
-    }
-
-    g_sys_status.is_running = true;
-
-    if (g_sys_status.is_voice_command_running) {
-        g_sys_status.is_voice_command_running = false;
-        R_BSP_IrqDisable(g_i2s0_cfg.rxi_irq);
-    }
-
-    reset_pb_ctx();
-
-    if (g_motion_ctrl.state != MOTION_STATE_IDLE) {
-        motion_ctrl_stop(&g_motion_ctrl);
-    }
-
-    if (!motion_ctrl_start_teaching(&g_motion_ctrl)) {
-        LOG_E("Failed to enter teach mode");
-        g_sys_status.is_running = false;
-        return;
-    }
-
-    LOG_I("Teach mode entered");
+    LOG_I("Teach UI entered, legacy teaching control disabled");
 }
 
 void user_on_teach_exit(void) {
-    if (g_motion_ctrl.state == MOTION_STATE_TEACHING) {
-        motion_ctrl_stop(&g_motion_ctrl);
-    }
-    g_sys_status.is_running = false;
-    reset_pb_ctx();
-    LOG_I("Teach mode exited");
+    LOG_I("Teach UI exited, legacy teaching control disabled");
 }
 
 /**
@@ -372,57 +427,52 @@ void can_comms_entry(void *pvParameters) {
     LOG_I("CAN communication thread started.");
     
     fsp_err_t err;
-    TickType_t xLastWakeTime;
+    TickType_t x_last_wake_time;
     
     /* 初始化CANFD */
     err = canfd0_init();
-    if (err != FSP_SUCCESS) {
-        LOG_E("CANFD0 initialization failed: %d", err);
-        //__BKPT();
-    }
+    if (err != FSP_SUCCESS) LOG_E("CANFD0 initialization failed: %d", err);
     
     /* 初始化电机 */
     err = arm_motors_init();
-    if (err != FSP_SUCCESS) {
-        LOG_E("Failed to initialize arm motors: %d", err);
-        //__BKPT();
-    }
+    if (err != FSP_SUCCESS) LOG_E("Failed to initialize arm motors: %d", err);
+
+    /* 启动时一次性下发J1~J4电流限制（A） */
+    apply_joint_current_limits_from_nvm();
     
     /* 初始化运控控制器 */
     motion_ctrl_config_t motion_config;
     init_motion_config(&motion_config);
     
-    if (!motion_ctrl_init(&g_motion_ctrl, &motion_config)) {
-        LOG_E("Failed to initialize motion controller");
-        //__BKPT();
-    }
+    if (!motion_ctrl_init(&g_motion_ctrl, &motion_config)) LOG_E("Failed to initialize motion controller");
     
     g_motion_ctrl.state = MOTION_STATE_IDLE;
     LOG_I("Motion control initialized.");
     
     /* 获取动作配置 */
     const motion_config_t *nvm_motion = nvm_get_motion_config();
-    if (nvm_motion == NULL) {
-        LOG_W("No motion configuration found in NVM");
-    } else {
-        LOG_I("Loaded motion configuration from NVM");
-    }
-    xLastWakeTime = xTaskGetTickCount();
+    if (nvm_motion == NULL) LOG_W("No motion configuration found in NVM");
+    else LOG_I("Loaded motion configuration from NVM");
+
+    x_last_wake_time = xTaskGetTickCount();
     
     while (1) {
         float current_period_ms = get_current_mode_period_ms(g_motion_ctrl.state);
-        TickType_t xPeriod = pdMS_TO_TICKS(current_period_ms);
+        TickType_t x_period = pdMS_TO_TICKS(current_period_ms);
         float dt = current_period_ms / 1000.0f;  /* 秒 */
         
         /* 等待下一个控制周期 */
-        xTaskDelayUntil(&xLastWakeTime, xPeriod);
+        xTaskDelayUntil(&x_last_wake_time, x_period);
         
         /* 处理急停 */
         if (g_sys_status.is_emergency_stop) {
-            if (g_motion_ctrl.state != MOTION_STATE_IDLE) {
-                motion_ctrl_emergency_stop(&g_motion_ctrl);
-            }
+            if (g_motion_ctrl.state != MOTION_STATE_IDLE) motion_ctrl_emergency_stop(&g_motion_ctrl);
+            clear_teach_jog_cmd(true);
             reset_pb_ctx();
+            continue;
+        }
+
+        if (handle_teach_jog_mode()) {
             continue;
         }
 
@@ -439,8 +489,6 @@ void can_comms_entry(void *pvParameters) {
         }
 
         sched_playback(nvm_motion);
-
         motion_ctrl_loop(&g_motion_ctrl, dt);
-        
     }
 }

@@ -1,3 +1,10 @@
+/**
+ * @file  voice_command_entry.c
+ * @brief 语音指令任务入口（初始化麦克风 + EI 模型，循环处理语音识别与投票逻辑）
+ * @date  2026-02-11
+ * @author Ma Ziteng
+ */
+
 #include "voice_command.h"
 #include "drv_microphone.h"
 #include "sys_log.h"
@@ -46,28 +53,25 @@ static int process_vote_window(int inference_result) {
     int final_result = -1;
 
     if (inference_result >= 0 && inference_result <= 4) {
-        if (g_vote_count < VOTE_WINDOW_SIZE) {
-            g_vote_count++;
-        }
+        if (g_vote_count < VOTE_WINDOW_SIZE) g_vote_count++;
 
-        g_vote_history[g_vote_index] = inference_result;
-        g_vote_index = (g_vote_index + 1) % VOTE_WINDOW_SIZE;
+        g_vote_history[g_vote_index] = (uint8_t)inference_result;
+        g_vote_index = (uint8_t)((g_vote_index + 1) % VOTE_WINDOW_SIZE);
 
         uint8_t counts[5] = {0};
         uint8_t consecutive = 0;
         uint8_t last_class = 0xFF;
 
         for (uint8_t i = 0; i < g_vote_count; i++) {
-            uint8_t idx = (g_vote_index - g_vote_count + i + VOTE_WINDOW_SIZE) % VOTE_WINDOW_SIZE;
+            uint8_t idx = (uint8_t)((g_vote_index - g_vote_count + i + VOTE_WINDOW_SIZE) % VOTE_WINDOW_SIZE);
             uint8_t curr_class = g_vote_history[idx];
 
-            if (curr_class == last_class) {
-                consecutive++;
-            } else {
+            if (curr_class == last_class) consecutive++;
+            else {
                 consecutive = 1;
                 last_class = curr_class;
             }
-            counts[curr_class] += consecutive;
+            counts[curr_class] = (uint8_t)(counts[curr_class] + consecutive);
         }
 
         LOG_D("Vote: class=%d, counts=[%d,%d,%d,%d,%d], window=%d/%d",
@@ -76,13 +80,9 @@ static int process_vote_window(int inference_result) {
                g_vote_count, VOTE_WINDOW_SIZE);
 
         if (g_vote_count >= VOTE_WINDOW_SIZE) {
-            if (counts[1] >= VOTE_FORCEPS) {
-                final_result = 1;
-            } else if (counts[2] >= VOTE_HEMOSTAT) {
-                final_result = 2;
-            } else if (counts[3] >= VOTE_SCALPEL) {
-                final_result = 3;
-            }
+            if (counts[1] >= VOTE_FORCEPS) final_result = 1;
+            else if (counts[2] >= VOTE_HEMOSTAT) final_result = 2;
+            else if (counts[3] >= VOTE_SCALPEL) final_result = 3;
         }
     }
 
@@ -116,20 +116,20 @@ void voice_command_entry(void *pvParameters) {
     LOG_I("VOICE_TEST_MODE enabled: auto start voice test.");
 #endif
 
-    while(1) {
-        while(g_sys_status.is_voice_command_running) {
+    while (1) {
+        while (g_sys_status.is_voice_command_running) {
             int ret = ei_run_inference();
-            if(ret != -1) {
+            if (ret != -1) {
                 int final_result = process_vote_window(ret);
 
-                if(final_result >= 1 && final_result <= 3) {
+                if (final_result >= 1 && final_result <= 3) {
 #if VOICE_TEST_ENABLED
                       LOG_I("VT_EVT,id=%d,label=%s",
                           final_result,
                           ei_get_label_name(final_result));
 #else
-                    LOG_D("Add instrument %d to queue.", get_instrument_name(final_result));
-                    add_instrument_to_queue(final_result);
+                    LOG_D("Add instrument %d to queue.", final_result);
+                    add_instrument_to_queue((uint8_t)final_result);
                     update_queue_display_string();
 #endif
                 }

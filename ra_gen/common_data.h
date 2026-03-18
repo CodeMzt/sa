@@ -77,6 +77,7 @@ extern QueueHandle_t g_log_queue;
 extern SemaphoreHandle_t g_uart_tx_sem;
 extern SemaphoreHandle_t g_log_mutex;
 extern SemaphoreHandle_t audio_semaphore;
+extern SemaphoreHandle_t g_cfg_save_mutex;
 void g_common_init(void);
 FSP_FOOTER
 #endif /* COMMON_DATA_H_ */
