@@ -735,7 +735,7 @@ FSP Configuration
   Thread "net_connect"
     Symbol: net_connect
     Name: net_connect
-    Stack size (bytes): 0x2000
+    Stack size (bytes): 0x3000
     Priority: 1
     Thread Context: NULL
     Memory Allocation: Static
@@ -1108,7 +1108,8 @@ FSP Configuration
     Symbol: audio_semaphore
     Memory Allocation: Static
     
-  Object "g_cfg_save_mutex Binary Semaphore"
+  Object "g_cfg_save_mutex Mutex"
     Symbol: g_cfg_save_mutex
+    Type: Mutex
     Memory Allocation: Static
     

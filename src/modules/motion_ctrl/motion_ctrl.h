@@ -36,6 +36,13 @@ typedef enum {
     MOTION_STATE_ERROR          /* 错误状态 */
 } motion_state_t;
 
+/* 夹爪持续运控状态枚举 */
+typedef enum {
+    GRIPPER_HOLD_IDLE = 0,      /* 无持续命令 */
+    GRIPPER_HOLD_GRASP = 1,     /* 持续 grasp 状态 */
+    GRIPPER_HOLD_RELEASE = 2    /* 持续 release 状态（计时） */
+} gripper_hold_state_t;
+
 /* 控制器配置 */
 typedef struct {
     /* 三种模式共用控制器参数 */
@@ -67,6 +74,12 @@ typedef struct {
     uint8_t teach_jog_motor_id; /* 当前遥控电机ID，0表示无活动遥控 */
     float teach_jog_q_ref;      /* 遥控位置参考（关节侧rad） */
     bool teach_jog_q_valid;     /* 遥控位置参考是否已初始化 */
+    
+    /* 夹爪持续运控状态 */
+    gripper_hold_state_t gripper_hold_state;    /* 夹爪持续状态 */
+    float gripper_close_position;               /* grasp 目标位置 */
+    float gripper_kp, gripper_kd;               /* grasp Kp/Kd */
+    float gripper_release_timer;                /* release 计时器（秒）*/
     
     /* 状态标志 */
     bool is_initialized;        /* 是否已初始化 */

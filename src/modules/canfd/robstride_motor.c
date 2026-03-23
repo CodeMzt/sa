@@ -84,20 +84,20 @@ static float get_gear_ratio_by_id(uint8_t motor_id) {
     return get_gear_ratio_by_index(motor_index);
 }
 
-uint8_t robstride_get_motor_index(uint8_t motor_id) {
+uint8_t get_motor_index(uint8_t motor_id) {
     return find_motor_index(motor_id);
 }
 
-bool robstride_is_motor_id_valid(uint8_t motor_id) {
-    return robstride_get_motor_index(motor_id) < ROBSTRIDE_MOTOR_NUM;
+bool is_motor_id_valid(uint8_t motor_id) {
+    return get_motor_index(motor_id) < ROBSTRIDE_MOTOR_NUM;
 }
 
-bool robstride_is_joint_motor_id(uint8_t motor_id) {
+bool is_joint_motor_id(uint8_t motor_id) {
     return (motor_id >= ROBSTRIDE_MOTOR_ID_JOINT1) && (motor_id <= ROBSTRIDE_MOTOR_ID_JOINT4);
 }
 
-float robstride_clamp_position_cmd(uint8_t motor_id, float position_cmd) {
-    if (robstride_is_joint_motor_id(motor_id)) {
+float clamp_position_cmd(uint8_t motor_id, float position_cmd) {
+    if (is_joint_motor_id(motor_id)) {
         return clampf_range(position_cmd,
                             -ROBSTRIDE_JOINT_POSITION_LIMIT_RAD,
                             ROBSTRIDE_JOINT_POSITION_LIMIT_RAD);
@@ -434,7 +434,7 @@ fsp_err_t robstride_gripper_grasp(uint8_t motor_id,
 fsp_err_t robstride_gripper_release(uint8_t motor_id, float kp, float kd) {
     return robstride_motion_control(motor_id,
                                    ROBSTRIDE_GRIPPER_RELEASE_POS_RAD,
-                                   0.0f,   /* 速度目标：0 */
+                                   0.03f,   /* 速度目标：0 */
                                    kp,
                                    kd,
                                    0.0f);  /* 无力矩前馈 */

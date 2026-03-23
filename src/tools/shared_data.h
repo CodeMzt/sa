@@ -56,10 +56,10 @@ extern QueueHandle_t can_tx_queue;
 
 /* 器械队列操作函数 */
 bool is_instrument_in_queue(instrument_t inst);
-bool add_instrument_to_queue(instrument_t inst);
-void remove_instrument_from_queue(uint8_t index);
+bool add_instrument(instrument_t inst);
+void remove_instrument(uint8_t index);
 void clear_act_queue(void);
 const char* get_instrument_name(instrument_t inst);
-void update_queue_display_string(void);
+void update_queue_display(void);
 
 #endif /* SHARED_DATA_H_ */

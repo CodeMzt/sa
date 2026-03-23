@@ -187,11 +187,19 @@ void g_common_init(void)
         rtos_startup_err_callback (audio_semaphore, 0);
     }
     g_cfg_save_mutex =
-#if 1
-            xSemaphoreCreateBinaryStatic (&g_cfg_save_mutex_memory);
-#else
-                xSemaphoreCreateBinary();
+#if 0
+                #if 1
+                xSemaphoreCreateRecursiveMutexStatic(&g_cfg_save_mutex_memory);
+                #else
+                xSemaphoreCreateRecursiveMutex();
                 #endif
+                #else
+#if 1
+            xSemaphoreCreateMutexStatic (&g_cfg_save_mutex_memory);
+#else
+                xSemaphoreCreateMutex();
+                #endif
+#endif
     if (NULL == g_cfg_save_mutex)
     {
         rtos_startup_err_callback (g_cfg_save_mutex, 0);

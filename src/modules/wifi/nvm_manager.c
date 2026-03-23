@@ -12,6 +12,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#define NVM_CFG_SAVE_LOCK_TIMEOUT_MS    (200U)
+
 /* ---- RAM 缓存 ---- */
 static sys_config_t    g_sys_cfg;
 static motion_config_t g_motion_cfg;
@@ -79,7 +81,6 @@ fsp_err_t nvm_init(void) {
             g_nvm_init_state = 0U;
             return FSP_ERR_OUT_OF_MEMORY;
         }
-        (void)xSemaphoreGive(g_cfg_save_mutex);
     }
 
     /* 系统配置 */
@@ -140,7 +141,10 @@ fsp_err_t nvm_save_sys_config(const sys_config_t *new_cfg) {
     if (new_cfg == NULL) return FSP_ERR_ASSERTION;
 
     if (g_cfg_save_mutex != NULL) {
-        if (xSemaphoreTake(g_cfg_save_mutex, portMAX_DELAY) != pdTRUE) return FSP_ERR_INTERNAL;
+        if (xSemaphoreTake(g_cfg_save_mutex, pdMS_TO_TICKS(NVM_CFG_SAVE_LOCK_TIMEOUT_MS)) != pdTRUE) {
+            LOG_W("nvm_save_sys_config: cfg mutex timeout");
+            return FSP_ERR_TIMEOUT;
+        }
     }
 
     memcpy(&g_sys_cfg, new_cfg, sizeof(sys_config_t));
@@ -172,7 +176,10 @@ fsp_err_t nvm_save_motion_config(const motion_config_t *new_motion) {
     if (new_motion == NULL) return FSP_ERR_ASSERTION;
 
     if (g_cfg_save_mutex != NULL) {
-        if (xSemaphoreTake(g_cfg_save_mutex, portMAX_DELAY) != pdTRUE) return FSP_ERR_INTERNAL;
+        if (xSemaphoreTake(g_cfg_save_mutex, pdMS_TO_TICKS(NVM_CFG_SAVE_LOCK_TIMEOUT_MS)) != pdTRUE) {
+            LOG_W("nvm_save_motion_config: cfg mutex timeout");
+            return FSP_ERR_TIMEOUT;
+        }
     }
 
     memcpy(&g_motion_cfg, new_motion, sizeof(motion_config_t));

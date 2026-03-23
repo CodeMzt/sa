@@ -111,7 +111,7 @@ fsp_err_t lcd_spi_init(void)
     write_cmd(0xC5); write_data(0x00);
     write_cmd(0x1A); write_data(0x80);
 
-    write_cmd(0x36); write_data(0x48);
+    write_cmd(0x36); write_data(0x88);
     write_cmd(0x3A); write_data(0x55);
     write_cmd(0xB0); write_data(0x00);
     write_cmd(0xB1); write_data(0xA0);

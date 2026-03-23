@@ -714,9 +714,10 @@
       <property id="rtos.awsfreertos.object.binary_semaphore.symbol" value="audio_semaphore"/>
       <property id="rtos.awsfreertos.object.binary_semaphore.allocation" value="rtos.awsfreertos.object.binary_semaphore.allocation.static"/>
     </object>
-    <object id="rtos.awsfreertos.object.binary_semaphore.660390643">
-      <property id="rtos.awsfreertos.object.binary_semaphore.symbol" value="g_cfg_save_mutex"/>
-      <property id="rtos.awsfreertos.object.binary_semaphore.allocation" value="rtos.awsfreertos.object.binary_semaphore.allocation.static"/>
+    <object id="rtos.awsfreertos.object.mutex.250055159">
+      <property id="rtos.awsfreertos.object.mutex.symbol" value="g_cfg_save_mutex"/>
+      <property id="rtos.awsfreertos.object.mutex.type" value="rtos.awsfreertos.object.mutex.type.mutex"/>
+      <property id="rtos.awsfreertos.object.mutex.allocation" value="rtos.awsfreertos.object.mutex.allocation.static"/>
     </object>
     <context id="_hal.0">
       <stack module="module.driver.ioport_on_ioport.0"/>
@@ -738,7 +739,7 @@
     <context id="rtos.awsfreertos.thread.432287299">
       <property id="_symbol" value="net_connect"/>
       <property id="rtos.awsfreertos.thread.name" value="net_connect"/>
-      <property id="rtos.awsfreertos.thread.stack" value="0x2000"/>
+      <property id="rtos.awsfreertos.thread.stack" value="0x3000"/>
       <property id="rtos.awsfreertos.thread.priority" value="1"/>
       <property id="rtos.awsfreertos.thread.context" value="NULL"/>
       <property id="rtos.awsfreertos.thread.allocation" value="rtos.awsfreertos.thread.allocation.static"/>

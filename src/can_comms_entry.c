@@ -19,6 +19,11 @@
 #define LOG_READY_WAIT_SLICE_MS   10U
 #define LOG_READY_WAIT_MAX_MS   1000U
 
+#if defined(CAN_TEST_MODE)
+#define CAN_TEST_POLL_INTERVAL_MS  100U
+#define CAN_TEST_POLL_DURATION_MS   60000U
+#endif
+
 /* 回放执行上下文结构体 */
 typedef struct {
     bool active;
@@ -37,6 +42,60 @@ static const uint8_t g_group_chain_map[4][PLAYBACK_CHAIN_LEN] = {
     {2U, 3U, 6U},
     {4U, 5U, 6U}
 };
+
+#if defined(CAN_TEST_MODE)
+/**
+ * @brief CAN 测试模式下周期发送“无副作用”测试指令
+ * @note 读取 JOINT_4 的只读参数（VBUS），用于验证周期 TX，不触发实际动作
+ */
+static void can_test_send_noop_poll(void) {
+    static TickType_t s_last_poll_tick = 0;
+    static TickType_t s_start_tick = 0;
+    static bool s_started = false;
+    static bool s_stop_logged = false;
+    static uint32_t s_ok_log_div = 0U;
+    static uint32_t s_err_log_div = 0U;
+
+    TickType_t now = xTaskGetTickCount();
+
+    if (!s_started) {
+        s_start_tick = now;
+        s_started = true;
+    }
+    if(s_stop_logged)return;
+
+    if ((now - s_start_tick) >= pdMS_TO_TICKS(CAN_TEST_POLL_DURATION_MS)) {
+        if (!s_stop_logged) {
+            robstride_disable_auto_report(ROBSTRIDE_MOTOR_ID_JOINT4);
+            LOG_I("CAN_TEST poll cmd auto-stopped after %u ms", (unsigned int)CAN_TEST_POLL_DURATION_MS);
+            s_stop_logged = true;
+        }
+        return;
+    }
+
+    if ((s_last_poll_tick != 0U) && ((now - s_last_poll_tick) < pdMS_TO_TICKS(CAN_TEST_POLL_INTERVAL_MS))) {
+        return;
+    }
+    s_last_poll_tick = now;
+
+    fsp_err_t err = robstride_stop(ROBSTRIDE_MOTOR_ID_JOINT4);
+    if (err != FSP_SUCCESS) {
+        if ((s_err_log_div++ % 20U) == 0U) {
+            LOG_W("CAN_TEST poll cmd failed: motor=%u index=0x%04X err=%d",
+                  (unsigned int)ROBSTRIDE_MOTOR_ID_JOINT4,
+                  (unsigned int)ROBSTRIDE_PARAM_VBUS,
+                  err);
+        }
+        return;
+    }
+
+    if ((s_ok_log_div++ % 100U) == 0U) {
+        LOG_D("CAN_TEST poll cmd sent: motor=%u index=0x%04X",
+              (unsigned int)ROBSTRIDE_MOTOR_ID_JOINT4,
+              (unsigned int)ROBSTRIDE_PARAM_VBUS);
+    }
+}
+#endif
 
 
 /**
@@ -60,6 +119,7 @@ static fsp_err_t arm_motors_init(motion_ctrl_config_t *config) {
         ROBSTRIDE_MOTOR_ID_GRIPPER
     };
     for (uint8_t i = 0; i < 5U; i++) {
+        if(i == 0 || i == 3) continue;
         err = robstride_enable(joint_ids[i]);
         if (err != FSP_SUCCESS) return err;
         vTaskDelay(5);
@@ -83,7 +143,7 @@ static fsp_err_t arm_motors_init(motion_ctrl_config_t *config) {
     /* 安全参数 */
     for (int i = 0; i < 4; i++) {
         config->max_torque[i] = 1.0f;    /* 最大力矩 */
-        config->max_velocity[i] = 0.8f; /* 最大速度（关节侧rad/s，减速比换算前） */
+        config->max_velocity[i] = 0.1f; /* 最大速度（关节侧rad/s，减速比换算前） */
     }
 
     const sys_config_t *sys_cfg = nvm_get_sys_config();
@@ -215,8 +275,8 @@ static bool load_next_inst(void) {
     instrument_t inst = g_sys_status.act_queue[0];
     if (inst < INSTRUMENT_FORCEPS || inst > INSTRUMENT_SCALPEL) {
         LOG_W("Invalid instrument in queue head: %d, removed", inst);
-        remove_instrument_from_queue(0U);
-        update_queue_display_string();
+        remove_instrument(0U);
+        update_queue_display();
         return false;
     }
 
@@ -263,8 +323,8 @@ static void sched_playback(const motion_config_t *cfg) {
     if (g_playback_ctx.stage >= PLAYBACK_CHAIN_LEN) {
         LOG_I("Playback chain completed: inst=%s",
               get_instrument_name(g_playback_ctx.current_inst));
-        remove_instrument_from_queue(0U);
-        update_queue_display_string();
+        remove_instrument(0U);
+        update_queue_display();
         g_playback_ctx.active = false;
         g_playback_ctx.current_inst = INSTRUMENT_NONE;
         g_playback_ctx.stage = 0U;
@@ -282,8 +342,8 @@ static void sched_playback(const motion_config_t *cfg) {
     if (start_group(cfg, group_idx)) g_playback_ctx.stage++;
     else {
         LOG_E("Skip instrument %d due to playback start failure", g_playback_ctx.current_inst);
-        remove_instrument_from_queue(0U);
-        update_queue_display_string();
+        remove_instrument(0U);
+        update_queue_display();
         g_playback_ctx.active = false;
         g_playback_ctx.current_inst = INSTRUMENT_NONE;
         g_playback_ctx.stage = 0U;
@@ -366,11 +426,23 @@ void can_comms_entry(void *pvParameters) {
     LOG_I("CAN communication thread started.");
     
     fsp_err_t err;
-    TickType_t x_last_wake_time;
     
     /* 初始化CANFD */
     err = canfd0_init();
     if (err != FSP_SUCCESS) LOG_E("CANFD0 initialization failed: %d", err);
+
+#if defined(CAN_TEST_MODE)
+    (void)robstride_enable_auto_report(ROBSTRIDE_MOTOR_ID_JOINT4);
+    LOG_I("CAN_TEST mode active: JOINT4 poll only, auto-stop after %u ms",
+          (unsigned int)CAN_TEST_POLL_DURATION_MS);
+
+    while (1) {
+        vTaskDelay(pdMS_TO_TICKS(CAN_TEST_POLL_INTERVAL_MS));
+        canfd_link_check();
+        can_test_send_noop_poll();
+    }
+#else
+    TickType_t x_last_wake_time;
     
     /* 初始化电机 */
     motion_ctrl_config_t motion_config;
@@ -426,4 +498,5 @@ void can_comms_entry(void *pvParameters) {
         sched_playback(nvm_motion);
         motion_ctrl_loop(&g_motion_ctrl, dt);
     }
+#endif
 }

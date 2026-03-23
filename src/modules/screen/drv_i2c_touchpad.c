@@ -41,7 +41,7 @@ static bool ft5x06_read(touch_dev_t *dev, touch_monitor_t *data);
  */
 static touch_dev_t g_touch_dev = {
     .name     = "ft5x06",
-    .rotation = TOUCH_ROT_NONE, /* Default rotation, modify as needed */
+    .rotation = TOUCH_ROT_180, /* Default rotation, modify as needed */
     .init     = ft5x06_init,
     .read     = ft5x06_read
 };

@@ -12,10 +12,10 @@
 #include <string.h>
 
 #define DEG2RAD_F 0.01745329251994329577f
-#define GRIPPER_ACTION_KP      8.0f
+#define GRIPPER_ACTION_KP      3.0f
 #define GRIPPER_ACTION_KD      0.8f
 #define TEACH_JOG_TIMEOUT_MS   (300U)
-#define JOG_GRIPPER_KP         (8.0f)
+#define JOG_GRIPPER_KP         (3.0f)
 #define JOG_GRIPPER_KD         (0.8f)
 
 /* 全局控制器实例 */
@@ -29,7 +29,7 @@ static const uint8_t k_joint_ids[4] = {
 };
 
 static float get_motor_feedback_position(uint8_t motor_id) {
-    uint8_t motor_index = robstride_get_motor_index(motor_id);
+    uint8_t motor_index = get_motor_index(motor_id);
     if (motor_index >= ROBSTRIDE_MOTOR_NUM) return 0.0f;
     return g_motors[motor_index].feedback.position;
 }
@@ -47,6 +47,30 @@ static float clampf_range(float value, float min_value, float max_value) {
     return value;
 }
 
+/**
+ * @brief 位置限制函数，根据电机ID对位置命令进行限制，并在触及关节极限时将速度命令置零
+ * @param motor_id 电机ID
+ * @param position_cmd 位置命令指针（rad），函数内会进行限制并更新该值
+ * @param velocity_cmd 速度命令指针（rad/s），当位置命令触及极限且速度指向外侧时，函数会将该值置零以防止继续碰撞极限
+ */
+static void position_limit(uint8_t motor_id,
+                            float *position_cmd,
+                            float *velocity_cmd) {
+    if (position_cmd == NULL || velocity_cmd == NULL) return;
+
+    float q_cmd = clamp_position_cmd(motor_id, *position_cmd);
+
+    if (is_joint_motor_id(motor_id)) {
+        bool hit_upper_limit = (q_cmd >= ROBSTRIDE_JOINT_POSITION_LIMIT_RAD) && (*velocity_cmd > 0.0f);
+        bool hit_lower_limit = (q_cmd <= -ROBSTRIDE_JOINT_POSITION_LIMIT_RAD) && (*velocity_cmd < 0.0f);
+        if (hit_upper_limit || hit_lower_limit) {
+            *velocity_cmd = 0.0f;
+        }
+    }
+
+    *position_cmd = q_cmd;
+}
+
 static bool send_joint_motion_targets(motion_controller_t *ctrl,
                                       const float q_target[4],
                                       const float v_target[4]) {
@@ -56,9 +80,10 @@ static bool send_joint_motion_targets(motion_controller_t *ctrl,
     if (ctrl == NULL || q_target == NULL || v_target == NULL) return false;
 
     for (uint8_t i = 0; i < 4U; i++) {
-        float q_cmd = robstride_clamp_position_cmd(k_joint_ids[i], q_target[i]);
+        float q_cmd = q_target[i];
         float v_lim = ctrl->config.max_velocity[i];
         float v_cmd = clampf_range(v_target[i], -v_lim, v_lim);
+        position_limit(k_joint_ids[i], &q_cmd, &v_cmd);
 
         if (q_cmd != q_target[i]) {
             if ((s_q_clamp_log_div[i]++ % 20U) == 0U) {
@@ -86,19 +111,27 @@ static bool send_joint_motion_targets(motion_controller_t *ctrl,
     return all_ok;
 }
 
-static fsp_err_t trigger_gripper_action(uint8_t action) {
+static fsp_err_t trigger_gripper_action(motion_controller_t *ctrl, uint8_t action) {
+    if (ctrl == NULL) return FSP_ERR_INVALID_ARGUMENT;
+    
     if (action == ACTION_GRIP) {
-        return robstride_gripper_grasp(ROBSTRIDE_MOTOR_ID_GRIPPER,
-                                       ROBSTRIDE_GRIPPER_CLOSED_POS_RAD,
-                                       GRIPPER_ACTION_KP,
-                                       GRIPPER_ACTION_KD,
-                                       0.0f);
+        /* 设置持续 grasp 状态，保存参数供 motion_ctrl_loop 周期调用 */
+        ctrl->gripper_hold_state = GRIPPER_HOLD_GRASP;
+        ctrl->gripper_close_position = ROBSTRIDE_GRIPPER_CLOSED_POS_RAD;
+        ctrl->gripper_kp = GRIPPER_ACTION_KP;
+        ctrl->gripper_kd = GRIPPER_ACTION_KD;
+        LOG_I("Gripper GRASP hold state activated");
+        return FSP_SUCCESS;
     }
 
     if (action == ACTION_RELEASE) {
-        return robstride_gripper_release(ROBSTRIDE_MOTOR_ID_GRIPPER,
-                                         GRIPPER_ACTION_KP,
-                                         GRIPPER_ACTION_KD);
+        /* 切换到持续 release 状态，启动 1s 计时器 */
+        ctrl->gripper_hold_state = GRIPPER_HOLD_RELEASE;
+        ctrl->gripper_release_timer = 0.0f;
+        ctrl->gripper_kp = GRIPPER_ACTION_KP;
+        ctrl->gripper_kd = GRIPPER_ACTION_KD;
+        LOG_I("Gripper RELEASE hold state activated (1s timer start)");
+        return FSP_SUCCESS;
     }
 
     return FSP_ERR_ASSERTION;
@@ -120,7 +153,7 @@ static const motion_ctrl_config_t DEFAULT_CONFIG = {
     
     /* 安全参数 */
     .max_torque = {1.0f, 1.0f, 1.0f, 1.0f},        /* 最大力矩 */
-    .max_velocity = {0.2f, 0.2f, 0.2f, 0.2f}   /* 最大速度 */
+    .max_velocity = {0.1f, 0.1f, 0.1f, 0.1f}   /* 最大速度 */
 };
 
 /**
@@ -137,6 +170,8 @@ bool motion_ctrl_init(motion_controller_t *ctrl, const motion_ctrl_config_t *con
     ctrl->state = MOTION_STATE_IDLE;
     ctrl->is_initialized = false;
     ctrl->emergency_stop = false;
+    ctrl->gripper_hold_state = GRIPPER_HOLD_IDLE;
+    ctrl->gripper_release_timer = 0.0f;
     
     /* 设置配置 */
     if (config != NULL) memcpy(&ctrl->config, config, sizeof(motion_ctrl_config_t));
@@ -308,6 +343,8 @@ void motion_ctrl_stop(motion_controller_t *ctrl) {
 
     ctrl->state = MOTION_STATE_IDLE;
     ctrl->seq_running = false;
+    ctrl->gripper_hold_state = GRIPPER_HOLD_IDLE;
+    ctrl->gripper_release_timer = 0.0f;
     traj_reset(&ctrl->trajectory);
     reset_teach_jog_ref(ctrl);
 
@@ -317,9 +354,9 @@ void motion_ctrl_stop(motion_controller_t *ctrl) {
 void motion_ctrl_clear_teach_jog(motion_controller_t *ctrl, bool stop_last_motor) {
     uint8_t motor_id = 0U;
 
-    if (ctrl != NULL && robstride_is_motor_id_valid(ctrl->teach_jog_motor_id)) {
+    if (ctrl != NULL && is_motor_id_valid(ctrl->teach_jog_motor_id)) {
         motor_id = ctrl->teach_jog_motor_id;
-    } else if (robstride_is_motor_id_valid(g_teach_jog_cmd.motor_id)) {
+    } else if (is_motor_id_valid(g_teach_jog_cmd.motor_id)) {
         motor_id = g_teach_jog_cmd.motor_id;
     }
 
@@ -328,7 +365,7 @@ void motion_ctrl_clear_teach_jog(motion_controller_t *ctrl, bool stop_last_motor
     g_teach_jog_cmd.vel_centi_rad_s = 0;
     g_teach_jog_cmd.last_update_tick = 0U;
 
-    if (stop_last_motor && robstride_is_motor_id_valid(motor_id)) {
+    if (stop_last_motor && is_motor_id_valid(motor_id)) {
         (void)robstride_stop(motor_id);
     }
 
@@ -356,6 +393,7 @@ static void teach_control_loop(motion_controller_t *ctrl, float dt) {
 
     if (dt <= 0.0f) dt = 0.01f;
 
+    // 安全检查：无效电机ID、超时、速度为0都视为停止示教拖动
     if (!active) {
         if (ctrl->teach_jog_motor_id != 0U) {
             motion_ctrl_clear_teach_jog(ctrl, true);
@@ -364,7 +402,7 @@ static void teach_control_loop(motion_controller_t *ctrl, float dt) {
         return;
     }
 
-    if (!robstride_is_motor_id_valid(motor_id)) {
+    if (!is_motor_id_valid(motor_id)) {
         LOG_W("Teach jog rejected: invalid motor id %u", (unsigned int)motor_id);
         motion_ctrl_clear_teach_jog(ctrl, true);
         ctrl->state = MOTION_STATE_IDLE;
@@ -394,13 +432,13 @@ static void teach_control_loop(motion_controller_t *ctrl, float dt) {
         (void)robstride_set_run_mode(motor_id, ROBSTRIDE_MODE_MOTION_CTRL);
         (void)robstride_enable(motor_id);
         ctrl->teach_jog_motor_id = motor_id;
-        ctrl->teach_jog_q_ref = robstride_clamp_position_cmd(motor_id, get_motor_feedback_position(motor_id));
+        ctrl->teach_jog_q_ref = clamp_position_cmd(motor_id, get_motor_feedback_position(motor_id));
         ctrl->teach_jog_q_valid = true;
         LOG_I("Teach jog active on motor %u", (unsigned int)motor_id);
     }
 
     if (!ctrl->teach_jog_q_valid) {
-        ctrl->teach_jog_q_ref = robstride_clamp_position_cmd(motor_id, get_motor_feedback_position(motor_id));
+        ctrl->teach_jog_q_ref = clamp_position_cmd(motor_id, get_motor_feedback_position(motor_id));
         ctrl->teach_jog_q_valid = true;
     }
 
@@ -408,7 +446,7 @@ static void teach_control_loop(motion_controller_t *ctrl, float dt) {
     float kp = JOG_GRIPPER_KP;
     float kd = JOG_GRIPPER_KD;
 
-    if (robstride_is_joint_motor_id(motor_id)) {
+    if (is_joint_motor_id(motor_id)) {
         uint8_t idx = motor_id - ROBSTRIDE_MOTOR_ID_JOINT1;
         float v_lim = ctrl->config.max_velocity[idx];
         v_cmd = clampf_range(v_cmd, -v_lim, v_lim);
@@ -416,8 +454,11 @@ static void teach_control_loop(motion_controller_t *ctrl, float dt) {
         kd = ctrl->config.controller.kd[idx];
     }
 
-    ctrl->teach_jog_q_ref += v_cmd * dt;
-    ctrl->teach_jog_q_ref = robstride_clamp_position_cmd(motor_id, ctrl->teach_jog_q_ref);
+    float q_next = ctrl->teach_jog_q_ref + (v_cmd * dt);
+    position_limit(motor_id, &q_next, &v_cmd);
+    ctrl->teach_jog_q_ref = q_next;
+
+    robstride_enable(motor_id);
 
     if (robstride_motion_control(motor_id,
                                  ctrl->teach_jog_q_ref,
@@ -426,6 +467,24 @@ static void teach_control_loop(motion_controller_t *ctrl, float dt) {
                                  kd,
                                  0.0f) != FSP_SUCCESS) {
         LOG_E("Teach jog motion command failed: motor=%u", (unsigned int)motor_id);
+    }
+
+    /* 夹爪持续运控逻辑（示教模式）*/
+    if (ctrl->gripper_hold_state == GRIPPER_HOLD_GRASP) {
+        robstride_gripper_grasp(ROBSTRIDE_MOTOR_ID_GRIPPER,
+                               ctrl->gripper_close_position,
+                               ctrl->gripper_kp,
+                               ctrl->gripper_kd,
+                               0.0f);
+    } else if (ctrl->gripper_hold_state == GRIPPER_HOLD_RELEASE) {
+        robstride_gripper_release(ROBSTRIDE_MOTOR_ID_GRIPPER,
+                                 ctrl->gripper_kp,
+                                 ctrl->gripper_kd);
+        ctrl->gripper_release_timer += dt;
+        if (ctrl->gripper_release_timer >= 1.0f) {
+            ctrl->gripper_hold_state = GRIPPER_HOLD_IDLE;
+            LOG_I("Gripper release hold completed in teach mode, returning to IDLE");
+        }
     }
 }
 
@@ -486,14 +545,14 @@ static void playback_control_loop(motion_controller_t *ctrl, float dt) {
             if ((prev_time < boundary_time) && (ctrl->seq_start_time >= boundary_time)) {
                 uint8_t action = ctrl->trajectory.segments[seg][0].action;
                 if (action == ACTION_GRIP) {
-                    fsp_err_t err = trigger_gripper_action(action);
+                    fsp_err_t err = trigger_gripper_action(ctrl, action);
                     if (err == FSP_SUCCESS) {
                         LOG_I("Segment %lu: GRIP action triggered", (unsigned long)seg);
                     } else {
                         LOG_E("Segment %lu: GRIP action failed, err=%d", (unsigned long)seg, err);
                     }
                 } else if (action == ACTION_RELEASE) {
-                    fsp_err_t err = trigger_gripper_action(action);
+                    fsp_err_t err = trigger_gripper_action(ctrl, action);
                     if (err == FSP_SUCCESS) {
                         LOG_I("Segment %lu: RELEASE action triggered", (unsigned long)seg);
                     } else {
@@ -501,6 +560,27 @@ static void playback_control_loop(motion_controller_t *ctrl, float dt) {
                     }
                 }
             }
+        }
+    }
+    
+    /* 夹爪持续运控逻辑：每周期检查状态并发送相应命令
+     * GRASP状态：持续发送 grasp 命令，直到触发 RELEASE
+     * RELEASE状态：持续发送 release 命令 ~1s，然后自动转为 IDLE
+     */
+    if (ctrl->gripper_hold_state == GRIPPER_HOLD_GRASP) {
+        robstride_gripper_grasp(ROBSTRIDE_MOTOR_ID_GRIPPER,
+                               ctrl->gripper_close_position,
+                               ctrl->gripper_kp,
+                               ctrl->gripper_kd,
+                               0.0f);
+    } else if (ctrl->gripper_hold_state == GRIPPER_HOLD_RELEASE) {
+        robstride_gripper_release(ROBSTRIDE_MOTOR_ID_GRIPPER,
+                                 ctrl->gripper_kp,
+                                 ctrl->gripper_kd);
+        ctrl->gripper_release_timer += dt;
+        if (ctrl->gripper_release_timer >= 1.0f) {
+            ctrl->gripper_hold_state = GRIPPER_HOLD_IDLE;
+            LOG_I("Gripper release hold completed, returning to IDLE");
         }
     }
     

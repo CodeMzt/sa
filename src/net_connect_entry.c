@@ -10,7 +10,9 @@
 #include "sys_log.h"
 #include "shared_data.h"
 #include "test_mode.h"
+#if !defined(UDP_TEST_MODE)
 #include "nvm_manager.h"
+#endif
 #include <string.h>
 
 static const uint8_t dns_server_addr[4] = { 8, 8, 8, 8 };
@@ -19,8 +21,62 @@ extern uint8_t  g_ether0_mac_address[6];
 static struct freertos_sockaddr server_addr;
 static uint8_t send_buf[PACKET_SIZE];
 
-static BaseType_t net_connect_init(void);
+static BaseType_t net_connect_init(const uint8_t ip_addr[4],
+                                   const uint8_t net_mask[4],
+                                   const uint8_t gateway[4],
+                                   const uint8_t mac_addr[6]);
 
+#if defined(UDP_TEST_MODE)
+#ifndef UDP_TEST_LOCAL_IP0
+#define UDP_TEST_LOCAL_IP0      192U
+#define UDP_TEST_LOCAL_IP1      168U
+#define UDP_TEST_LOCAL_IP2      3U
+#define UDP_TEST_LOCAL_IP3      100U
+#endif
+
+#ifndef UDP_TEST_NETMASK0
+#define UDP_TEST_NETMASK0       255U
+#define UDP_TEST_NETMASK1       255U
+#define UDP_TEST_NETMASK2       255U
+#define UDP_TEST_NETMASK3       0U
+#endif
+
+#ifndef UDP_TEST_GATEWAY0
+#define UDP_TEST_GATEWAY0       192U
+#define UDP_TEST_GATEWAY1       168U
+#define UDP_TEST_GATEWAY2       3U
+#define UDP_TEST_GATEWAY3       1U
+#endif
+
+#ifndef UDP_TEST_SERVER_IP0
+#define UDP_TEST_SERVER_IP0     192U
+#define UDP_TEST_SERVER_IP1     168U
+#define UDP_TEST_SERVER_IP2     3U
+#define UDP_TEST_SERVER_IP3     200U
+#endif
+
+#ifndef UDP_TEST_SERVER_PORT
+#define UDP_TEST_SERVER_PORT    2333U
+#endif
+
+static const uint8_t udp_test_local_ip[4] = {
+    UDP_TEST_LOCAL_IP0, UDP_TEST_LOCAL_IP1, UDP_TEST_LOCAL_IP2, UDP_TEST_LOCAL_IP3
+};
+
+static const uint8_t udp_test_netmask[4] = {
+    UDP_TEST_NETMASK0, UDP_TEST_NETMASK1, UDP_TEST_NETMASK2, UDP_TEST_NETMASK3
+};
+
+static const uint8_t udp_test_gateway[4] = {
+    UDP_TEST_GATEWAY0, UDP_TEST_GATEWAY1, UDP_TEST_GATEWAY2, UDP_TEST_GATEWAY3
+};
+
+static const uint8_t udp_test_server_ip[4] = {
+    UDP_TEST_SERVER_IP0, UDP_TEST_SERVER_IP1, UDP_TEST_SERVER_IP2, UDP_TEST_SERVER_IP3
+};
+#endif
+
+#if !defined(UDP_TEST_MODE)
 static bool is_valid_mac(const uint8_t mac[6]) {
     bool all_zero = true;
     bool all_ff = true;
@@ -30,6 +86,7 @@ static bool is_valid_mac(const uint8_t mac[6]) {
     }
     return !(all_zero || all_ff);
 }
+#endif
 
 void net_connect_entry(void *pvParameters) {
     FSP_PARAMETER_NOT_USED (pvParameters);
@@ -43,6 +100,31 @@ void net_connect_entry(void *pvParameters) {
     vTaskDelay(pdMS_TO_TICKS(3000));
     LOG_I("Ethernet connect thread started.");
 
+#if defined(UDP_TEST_MODE)
+    if (net_connect_init(udp_test_local_ip, udp_test_netmask, udp_test_gateway, g_ether0_mac_address) != pdTRUE) {
+        LOG_E("Failed to start the Ethernet.");
+    }
+
+    server_addr.sin_family = FREERTOS_AF_INET;
+    server_addr.sin_port = FreeRTOS_htons((uint16_t)UDP_TEST_SERVER_PORT);
+    server_addr.sin_address = (IP_Address_t)FreeRTOS_inet_addr_quick(udp_test_server_ip[0],
+                                                       udp_test_server_ip[1],
+                                                       udp_test_server_ip[2],
+                                                       udp_test_server_ip[3]);
+
+    LOG_I("UDP test target: %u.%u.%u.%u:%u",
+          udp_test_server_ip[0], udp_test_server_ip[1], udp_test_server_ip[2], udp_test_server_ip[3],
+          (unsigned int)UDP_TEST_SERVER_PORT);
+
+#else
+
+    uint8_t ip_addr[4] = {0};
+    uint8_t net_mask[4] = {0};
+    uint8_t gateway[4] = {0};
+    uint8_t server_ip[4] = {0};
+    uint8_t mac_addr[6] = {0};
+    uint16_t server_port = 0U;
+
     fsp_err_t nvm_err = nvm_init();
     if (nvm_err != FSP_SUCCESS) {
         LOG_E("NVM init failed in net task: %d", nvm_err);
@@ -52,6 +134,33 @@ void net_connect_entry(void *pvParameters) {
 
     const sys_config_t *cfg = nvm_get_sys_config();
 
+    ip_addr[0] = cfg->ip_addr[0];
+    ip_addr[1] = cfg->ip_addr[1];
+    ip_addr[2] = cfg->ip_addr[2];
+    ip_addr[3] = cfg->ip_addr[3];
+
+    net_mask[0] = cfg->netmask[0];
+    net_mask[1] = cfg->netmask[1];
+    net_mask[2] = cfg->netmask[2];
+    net_mask[3] = cfg->netmask[3];
+
+    gateway[0] = cfg->gateway[0];
+    gateway[1] = cfg->gateway[1];
+    gateway[2] = cfg->gateway[2];
+    gateway[3] = cfg->gateway[3];
+
+    server_ip[0] = cfg->server_ip[0];
+    server_ip[1] = cfg->server_ip[1];
+    server_ip[2] = cfg->server_ip[2];
+    server_ip[3] = cfg->server_ip[3];
+    server_port = cfg->server_port;
+
+    if (is_valid_mac(cfg->mac_addr)) {
+        memcpy(mac_addr, cfg->mac_addr, sizeof(mac_addr));
+    } else {
+        memcpy(mac_addr, g_ether0_mac_address, sizeof(mac_addr));
+    }
+
     LOG_I("ETH cfg: ip=%u.%u.%u.%u mask=%u.%u.%u.%u gw=%u.%u.%u.%u server=%u.%u.%u.%u:%u",
           cfg->ip_addr[0], cfg->ip_addr[1], cfg->ip_addr[2], cfg->ip_addr[3],
           cfg->netmask[0], cfg->netmask[1], cfg->netmask[2], cfg->netmask[3],
@@ -59,21 +168,23 @@ void net_connect_entry(void *pvParameters) {
           cfg->server_ip[0], cfg->server_ip[1], cfg->server_ip[2], cfg->server_ip[3],
           cfg->server_port);
 
-    if (net_connect_init() != pdTRUE) LOG_E("Failed to start the Ethernet.");
+    if (net_connect_init(ip_addr, net_mask, gateway, mac_addr) != pdTRUE) {
+        LOG_E("Failed to start the Ethernet.");
+    }
 
     server_addr.sin_family = FREERTOS_AF_INET;
-    server_addr.sin_port = FreeRTOS_htons(cfg->server_port);
-    server_addr.sin_address = (IP_Address_t)FreeRTOS_inet_addr_quick(cfg->server_ip[0],
-                                                       cfg->server_ip[1],
-                                                       cfg->server_ip[2],
-                                                       cfg->server_ip[3]);
+    server_addr.sin_port = FreeRTOS_htons(server_port);
+    server_addr.sin_address = (IP_Address_t)FreeRTOS_inet_addr_quick(server_ip[0],
+                                                       server_ip[1],
+                                                       server_ip[2],
+                                                       server_ip[3]);
+#endif
 
     while (1) {
-        fsp_err_t link_err = g_ether0.p_cfg->p_ether_phy_instance->p_api->linkStatusGet(
-                g_ether0.p_cfg->p_ether_phy_instance->p_ctrl);
+        /* Link state is managed by FreeRTOS+TCP internal tasks; avoid direct PHY polling here. */
         BaseType_t net_up = FreeRTOS_IsNetworkUp();
 
-        if ((link_err == FSP_SUCCESS) && (net_up == pdTRUE)) {
+        if (net_up == pdTRUE) {
             g_sys_status.is_eth_connected = true;
 
             Socket_t udp_sock = FreeRTOS_socket(FREERTOS_AF_INET, FREERTOS_SOCK_DGRAM, FREERTOS_IPPROTO_UDP);
@@ -99,7 +210,7 @@ void net_connect_entry(void *pvParameters) {
             LOG_W("Ethernet down or stack down, UDP loop stopped.");
         } else {
             g_sys_status.is_eth_connected = false;
-            LOG_W("Ethernet not ready: link_err=%d net_up=%ld", link_err, (long)net_up);
+            LOG_W("Ethernet not ready: net_up=%ld", (long)net_up);
             vTaskDelay(pdMS_TO_TICKS(1000));
         }
     }
@@ -109,20 +220,10 @@ void net_connect_entry(void *pvParameters) {
  * @brief 以太网相关初始化
  * @return pdTRUE 表示成功
  */
-static BaseType_t net_connect_init(void){
-    const sys_config_t *cfg = nvm_get_sys_config();
-
-    uint8_t ip_addr[4] = { cfg->ip_addr[0], cfg->ip_addr[1], cfg->ip_addr[2], cfg->ip_addr[3] };
-    uint8_t net_mask[4] = { cfg->netmask[0], cfg->netmask[1], cfg->netmask[2], cfg->netmask[3] };
-    uint8_t gateway[4] = { cfg->gateway[0], cfg->gateway[1], cfg->gateway[2], cfg->gateway[3] };
-    uint8_t mac_addr[6];
-
-    if (is_valid_mac(cfg->mac_addr)) {
-        memcpy(mac_addr, cfg->mac_addr, sizeof(mac_addr));
-    } else {
-        memcpy(mac_addr, g_ether0_mac_address, sizeof(mac_addr));
-    }
-
+static BaseType_t net_connect_init(const uint8_t ip_addr[4],
+                                   const uint8_t net_mask[4],
+                                   const uint8_t gateway[4],
+                                   const uint8_t mac_addr[6]) {
     fsp_err_t err = g_sce_protected_on_sce.open(&sce_ctrl,&sce_cfg);
     if (err != FSP_SUCCESS) return pdFALSE;
 

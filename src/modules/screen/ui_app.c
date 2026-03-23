@@ -17,6 +17,9 @@
 #include "drv_microphone.h"
 #include "motion_ctrl.h"
 
+/* 弧度转角度转换常数 */
+#define RAD2DEG_F 57.2957795130823208768f
+
 /* -------------------------------------------------------------------------- */
 /* Private Variables                                                          */
 /* -------------------------------------------------------------------------- */
@@ -131,7 +134,7 @@ static void event_teach_save_config_cb(lv_event_t * e);
 static void zero_feedback_timer_cb(lv_timer_t * timer);
 
 /* -------------------------------------------------------------------------- */
-/* Core Interface Functions                                                   */
+/* 接口函数                                                                    */
 /* -------------------------------------------------------------------------- */
 
 /**
@@ -403,7 +406,7 @@ static void create_touch_page(void) {
 
     /* === 队列显示 (左侧, 宽度220, 高度2行约40) === */
     label_queue_info = lv_label_create(lv_scr_act());
-    update_queue_display_string();
+    update_queue_display();
     lv_label_set_text(label_queue_info, g_sys_status.queue_list);
     lv_obj_set_width(label_queue_info, 220);
     lv_obj_set_height(label_queue_info, 40);
@@ -490,7 +493,7 @@ static void create_voice_page(void) {
 
     /* === 队列显示 (左侧, 宽度220, 高度2行约40) === */
     label_queue_info = lv_label_create(lv_scr_act());
-    update_queue_display_string();
+    update_queue_display();
     lv_label_set_text(label_queue_info, g_sys_status.queue_list);
     lv_obj_set_width(label_queue_info, 220);
     lv_obj_set_height(label_queue_info, 40);
@@ -747,7 +750,7 @@ static void event_mbox_cb(lv_event_t * e) {
         g_sys_status.is_debug_mode_active = false;
 
         clear_act_queue();
-        update_queue_display_string();
+        update_queue_display();
 
         if (label_voice_status != NULL && lv_obj_is_valid(label_voice_status)) {
             lv_label_set_text(label_voice_status, "Click bottom to start");
@@ -884,8 +887,8 @@ static void event_instrument_cb(lv_event_t * e) {
     else if (strcmp(name, "HEMOSTAT") == 0) inst = INSTRUMENT_HEMOSTAT;
     else if (strcmp(name, "FORCEPS") == 0) inst = INSTRUMENT_FORCEPS;
 
-    if (add_instrument_to_queue(inst)) {
-        update_queue_display_string();
+    if (add_instrument(inst)) {
+        update_queue_display();
         ui_update_status();
     }
 }
@@ -898,8 +901,8 @@ static void event_queue_back_cb(lv_event_t * e) {
     if (g_sys_status.is_running) return;
 
     if (g_sys_status.act_queue_count > 0) {
-        remove_instrument_from_queue(g_sys_status.act_queue_count - 1);
-        update_queue_display_string();
+        remove_instrument(g_sys_status.act_queue_count - 1);
+        update_queue_display();
         ui_update_status();
     }
 }
@@ -910,8 +913,8 @@ static void event_queue_back_cb(lv_event_t * e) {
  */
 static void event_voice_queue_back_cb(lv_event_t * e) {
     if (g_sys_status.act_queue_count > 0) {
-        remove_instrument_from_queue(g_sys_status.act_queue_count - 1);
-        update_queue_display_string();
+        remove_instrument(g_sys_status.act_queue_count - 1);
+        update_queue_display();
         ui_update_status();
     }
 }
@@ -921,8 +924,8 @@ static void event_voice_queue_back_cb(lv_event_t * e) {
 /* -------------------------------------------------------------------------- */
 
 bool ui_add_instrument_to_queue(instrument_t inst) {
-    if (add_instrument_to_queue(inst)) {
-        update_queue_display_string();
+    if (add_instrument(inst)) {
+        update_queue_display();
         ui_update_status();
         return true;
     }
@@ -1188,13 +1191,14 @@ static void teach_monitor_update_cb(lv_timer_t * timer) {
     char buf[16];
     /* 从 g_motors 读取数据并更新表格 */
     for (int i = 0; i < 5; i++) {
-        /* 位置 */
-        float pos = g_motors[i].feedback.position;
+        /* 位置（弧度转角度） */
+        float pos = g_motors[i].feedback.position * RAD2DEG_F;
         snprintf(buf, sizeof(buf), "%.2f", pos);
         lv_table_set_cell_value(table, i+1, 1, buf);
 
-        /* 速度 */
-        snprintf(buf, sizeof(buf), "%.2f", g_motors[i].feedback.velocity);
+        /* 速度（弧度转角度） */
+        float vel = g_motors[i].feedback.velocity * RAD2DEG_F;
+        snprintf(buf, sizeof(buf), "%.2f", vel);
         lv_table_set_cell_value(table, i+1, 2, buf);
 
         /* 力矩 */
@@ -1466,7 +1470,7 @@ static void teach_record_angle_update_cb(lv_timer_t * timer) {
     char buf[16];
     for (int i = 0; i < 4; i++) {
         if (labels[i] && lv_obj_is_valid(labels[i])) {
-            float angle = g_motors[i].feedback.position;
+            float angle = g_motors[i].feedback.position * RAD2DEG_F;
             snprintf(buf, sizeof(buf), "M%d:%.1f", i+1, angle);
             lv_label_set_text(labels[i], buf);
         }
@@ -1679,17 +1683,29 @@ static void event_teach_save_config_cb(lv_event_t * e) {
     lv_obj_t * btn = lv_event_get_current_target(e);
     const motion_config_t * cfg = nvm_get_motion_config();
     if (cfg) {
-        nvm_save_motion_config(cfg);
-        LOG_D("[UI] TEACH: Save config to Flash");
-        
-        /* 视觉反馈：按钮变灰色+"Saved!" */
         lv_obj_t * lbl = lv_obj_get_child(btn, 0);
         if (lbl) {
+            /* 先给即时反馈，避免用户误判无响应 */
             lv_obj_remove_style(btn, &style_btn_green, 0);
             lv_obj_add_style(btn, &style_btn_std, 0);
             lv_obj_set_style_bg_color(btn, COL_GRAY_DARK, 0);
-            lv_label_set_text(lbl, "Saved!");
-            
+            lv_label_set_text(lbl, "Saving...");
+        }
+
+        fsp_err_t err = nvm_save_motion_config(cfg);
+        if (err == FSP_SUCCESS) {
+            LOG_D("[UI] TEACH: Save config to Flash");
+            if (lbl) {
+                lv_label_set_text(lbl, "Saved!");
+            }
+        } else {
+            LOG_W("[UI] TEACH: Save config failed, err=%d", (int)err);
+            if (lbl) {
+                lv_label_set_text(lbl, "Save Fail");
+            }
+        }
+
+        if (lbl) {
             /* 1.5秒后恢复绿色+"SAVE" */
             typedef struct {
                 lv_obj_t * btn;

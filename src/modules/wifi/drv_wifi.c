@@ -19,7 +19,7 @@
 #include <limits.h>
 
 /* ---- 常量 ---- */
-#define RX_BUF_SIZE    4096
+#define RX_BUF_SIZE    8192
 #define TX_BUF_SIZE    8192
 #define CHUNK_MAX      256      /**< 大包分块发送时更稳妥的 SKSND 尺寸 */
 
@@ -45,6 +45,7 @@ static volatile char     rx_buf[RX_BUF_SIZE];
 static volatile uint16_t rx_idx;
 static volatile uint8_t  rx_state;          /**< 2 = 收到完整 \r\n 帧 */
 static volatile uint32_t isr_rx_count;
+static volatile uint32_t pending_frame_start_tick = 0;  /**< 不完整帧首次等待的时刻 */
 static volatile bool     tx_done = true;
 
 static char  tx_buf[TX_BUF_SIZE];
@@ -82,7 +83,14 @@ void wifi_uart_callback(uart_callback_args_t *p_args) {
     if (p_args->event == UART_EVENT_RX_CHAR) {
         char c = (char)p_args->data;
         isr_rx_count++;
-        if (rx_idx >= RX_BUF_SIZE - 1) rx_idx = 0;
+        /* 缓冲区满时：仅当无待处理帧时才回绕，保护不完整帧 */
+        if (rx_idx >= RX_BUF_SIZE - 1) {
+            if (rx_state != 2) {
+                rx_idx = 0;  /* 无待处理帧，安全回绕 */
+            } else {
+                return;  /* 有待处理帧，停止接收新字符 */
+            }
+        }
         rx_buf[rx_idx++] = c;
         rx_buf[rx_idx]   = '\0';
         if (rx_idx >= 2 && rx_buf[rx_idx - 2] == '\r' && rx_buf[rx_idx - 1] == '\n') rx_state = 2;
@@ -266,7 +274,22 @@ void wifi_process_commands(void) {
         const char *hdr_end = strstr(buf, "\r\n");
         if (!hdr_end) return;
         size_t expected = (size_t)(hdr_end - buf) + 4 + (size_t)dlen; /* hdr+\r\n+\r\n+data */
-        if (rx_idx < expected) { rx_state = 0; return; }
+        if (rx_idx < expected) {
+            /* 不完整帧：保持rx_state=2，让ISR继续累积 */
+            uint32_t now = xTaskGetTickCount();
+            if (pending_frame_start_tick == 0) pending_frame_start_tick = now;
+            if ((now - pending_frame_start_tick) > pdMS_TO_TICKS(5000)) {
+                /* 超时5秒：视为坏帧，清除 */
+                LOG_W("SKTRPT timeout (>5s): clearing corrupt frame");
+                R_BSP_IrqDisable(g_uart_wifi_cfg.rxi_irq);
+                rx_idx = 0; rx_buf[0] = '\0'; rx_state = 0;
+                pending_frame_start_tick = 0;
+                R_BSP_IrqEnable(g_uart_wifi_cfg.rxi_irq);
+            }
+            return;  /* 等待更多字节 */
+        }
+        /* 帧完整，重置计时 */
+        pending_frame_start_tick = 0;
     }
 
     /* 消费 buffer */

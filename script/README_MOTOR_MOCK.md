@@ -8,6 +8,7 @@
 |------|------|
 | `mock_motor_sender.py` | 模拟发送端：循环发送5个电机的状态数据包 |
 | `mock_motor_receiver.py` | 接收端：接收并解析验证数据包格式 |
+| `udp_reliability_receiver.py` | 可靠性测试接收端：统计丢包率、延迟、抖动 |
 
 ## 协议规格
 
@@ -34,6 +35,24 @@
 - 端口：`2333`
 
 ## 使用方法
+
+### 0. UDP 可靠性统计（推荐用于实测）
+
+该脚本按“首包对齐 + 固定发送周期”方法统计指标，不改变 MCU 原有 44B 协议。
+
+```bash
+python script/udp_reliability_receiver.py --listen-ip 0.0.0.0 --port 2333 --interval-ms 50 --duration-s 1800 --csv script/udp_test_result.csv
+```
+
+输出指标包括：
+- 接收包数 / 预期包数 / 估计丢包率
+- 延迟（min/avg/p50/p95/max）
+- 抖动（avg/p50/p95/max）
+
+参数说明：
+- `--interval-ms`：与 MCU 发送周期一致（当前默认 50ms）
+- `--duration-s`：测试时长，默认 1800 秒（30 分钟），0 表示直到手动停止
+- `--csv`：导出 CSV（包含整体统计分析 + 逐包统计明细，用于后续论文/报告）；若目录不存在会自动创建，编码为 UTF-8 BOM（utf-8-sig）以兼容 Windows 表格软件
 
 ### 1. 本地测试（单机模拟完整链路）
 

@@ -27,7 +27,7 @@ volatile system_status_t g_sys_status = {
 volatile teach_jog_cmd_t g_teach_jog_cmd = {
     .active = false,
     .motor_id = 0U,
-    .vel_centi_rad_s = 0,
+    .vel_centi_rad_s = 0, // 单位：0.01 rad/s
     .last_update_tick = 0U,
 };
 
@@ -49,7 +49,7 @@ bool is_instrument_in_queue(instrument_t inst) {
  * @param inst 器械类型
  * @return true 表示添加成功
  */
-bool add_instrument_to_queue(instrument_t inst) {
+bool add_instrument(instrument_t inst) {
     if (inst == INSTRUMENT_NONE) return false;
     if (g_sys_status.act_queue_count >= 3) return false;
     if (is_instrument_in_queue(inst)) return false;
@@ -63,7 +63,7 @@ bool add_instrument_to_queue(instrument_t inst) {
  * @brief 从队列中移除器械
  * @param index 队列索引
  */
-void remove_instrument_from_queue(uint8_t index) {
+void remove_instrument(uint8_t index) {
     if (index >= g_sys_status.act_queue_count) return;
 
     for (uint8_t i = index; i < g_sys_status.act_queue_count - 1; i++) {
@@ -99,7 +99,7 @@ const char* get_instrument_name(instrument_t inst) {
 /**
  * @brief 更新队列显示字符串
  */
-void update_queue_display_string(void) {
+void update_queue_display(void) {
     if (g_sys_status.act_queue_count == 0) {
         snprintf(g_sys_status.queue_list, sizeof(g_sys_status.queue_list), "Queue: [EMPTY]");
     } else {

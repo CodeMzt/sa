@@ -21,7 +21,7 @@ static void reset_teach_jog_cmd_with_stop(void) {
     g_teach_jog_cmd.vel_centi_rad_s = 0;
     g_teach_jog_cmd.last_update_tick = 0U;
 
-    if (robstride_is_motor_id_valid(motor_id)) {
+    if (is_motor_id_valid(motor_id)) {
         (void)robstride_stop(motor_id);
     }
 }

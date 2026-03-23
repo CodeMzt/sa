@@ -4,9 +4,9 @@
 #if 1
 static StaticTask_t net_connect_memory;
 #if defined(__ARMCC_VERSION)           /* AC6 compiler */
-                static uint8_t net_connect_stack[0x2000] BSP_PLACE_IN_SECTION(BSP_UNINIT_SECTION_PREFIX ".stack.thread") BSP_ALIGN_VARIABLE(BSP_STACK_ALIGNMENT);
+                static uint8_t net_connect_stack[0x3000] BSP_PLACE_IN_SECTION(BSP_UNINIT_SECTION_PREFIX ".stack.thread") BSP_ALIGN_VARIABLE(BSP_STACK_ALIGNMENT);
                 #else
-static uint8_t net_connect_stack[0x2000] BSP_PLACE_IN_SECTION(BSP_UNINIT_SECTION_PREFIX ".stack.net_connect") BSP_ALIGN_VARIABLE(BSP_STACK_ALIGNMENT);
+static uint8_t net_connect_stack[0x3000] BSP_PLACE_IN_SECTION(BSP_UNINIT_SECTION_PREFIX ".stack.net_connect") BSP_ALIGN_VARIABLE(BSP_STACK_ALIGNMENT);
 #endif
 #endif
 TaskHandle_t net_connect;
@@ -32,7 +32,7 @@ void net_connect_create(void)
                     BaseType_t net_connect_create_err = xTaskCreate(
                     #endif
                                      net_connect_func,
-                                     (const char*) "net_connect", 0x2000 / 4, // In words, not bytes
+                                     (const char*) "net_connect", 0x3000 / 4, // In words, not bytes
                                      (void*) &net_connect_parameters, //pvParameters
                                      1,
 #if 1

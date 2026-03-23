@@ -136,8 +136,8 @@ void voice_command_entry(void *pvParameters) {
                           ei_get_label_name(final_result));
 #else
                     LOG_D("Add instrument %d to queue.", final_result);
-                    add_instrument_to_queue((uint8_t)final_result);
-                    update_queue_display_string();
+                    add_instrument((uint8_t)final_result);
+                    update_queue_display();
 #endif
                 }
             }
