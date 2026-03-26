@@ -15,6 +15,14 @@
 #ifndef ROBSTRIDE_MOTOR_H_
 #define ROBSTRIDE_MOTOR_H_
 
+/* -------------------------------------------------------------------------- */
+/* 旧模块说明                                                                  */
+/*                                                                            */
+/* 本模块描述的是旧版 RobStride CAN 电机协议接口。当前项目仍保留该头文件，      */
+/* 主要原因是共享电机镜像 `g_motors`、关节 ID、位置限幅等基础定义仍被新串口      */
+/* 舵机方案复用；但其中大部分 CAN 控制函数已经不再适用于新的运行时控制链路。     */
+/* -------------------------------------------------------------------------- */
+
 #include "can_comms.h"
 #include <stdbool.h>
 #include <stdint.h>
@@ -32,10 +40,15 @@
 #define ROBSTRIDE_MOTOR_ID_JOINT2 (2U)
 #define ROBSTRIDE_MOTOR_ID_JOINT3 (3U)
 #define ROBSTRIDE_MOTOR_ID_JOINT4 (4U)
-#define ROBSTRIDE_MOTOR_ID_GRIPPER (5U)
+#define ROBSTRIDE_MOTOR_ID_JOINT5 (5U)
+#define ROBSTRIDE_MOTOR_ID_GRIPPER (6U)
 
 /** 电机总数 */
-#define ROBSTRIDE_MOTOR_NUM (5U)
+#define ROBSTRIDE_JOINT_NUM (5U)
+#define ROBSTRIDE_MOTOR_NUM (6U)
+/* 新串口运控当前启用 1/2/3/4/5 五个关节以及夹爪。 */
+#define ROBSTRIDE_ACTIVE_JOINT_NUM (5U)
+#define ROBSTRIDE_ACTIVE_MOTOR_NUM (6U)
 
 /* 关节侧与电机侧角度/角速度换算比（关节1~4=20，夹爪=1） */
 #define ROBSTRIDE_GEAR_RATIO_JOINT_DEFAULT (20.0f)
@@ -160,7 +173,7 @@ typedef struct {
   robstride_feedback_t feedback; /* 最新反馈数据 */
 } robstride_motor_t;
 
-/* 每个电机的减速比：索引0~3对应关节1~4，索引4对应夹爪 */
+/* 每个电机的减速比：索引0~3对应关节1~4，索引4对应电机5(保留)，索引5对应夹爪 */
 extern const float g_motor_gear_ratio[ROBSTRIDE_MOTOR_NUM];
 
 /**
@@ -175,7 +188,7 @@ uint8_t get_motor_index(uint8_t motor_id);
 bool is_motor_id_valid(uint8_t motor_id);
 
 /**
- * @brief  检查电机 ID 是否为关节1~4
+ * @brief  检查电机 ID 是否为关节1~5
  */
 bool is_joint_motor_id(uint8_t motor_id);
 

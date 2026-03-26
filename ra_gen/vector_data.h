@@ -6,7 +6,7 @@
         #endif
 /* Number of interrupts allocated */
 #ifndef VECTOR_DATA_IRQ_COUNT
-#define VECTOR_DATA_IRQ_COUNT    (24)
+#define VECTOR_DATA_IRQ_COUNT    (30)
 #endif
 /* ISR prototypes */
 void canfd_error_isr(void);
@@ -28,6 +28,8 @@ void iic_master_tei_isr(void);
 void iic_master_eri_isr(void);
 void ssi_rxi_isr(void);
 void ssi_int_isr(void);
+void sci_i2c_txi_isr(void);
+void sci_i2c_tei_isr(void);
 
 /* Vector table allocations */
 #define VECTOR_NUMBER_CAN0_CHERR ((IRQn_Type) 0) /* CAN0 CHERR (Channel  error) */
@@ -78,8 +80,20 @@ void ssi_int_isr(void);
 #define SSI0_RXI_IRQn          ((IRQn_Type) 22) /* SSI0 RXI (Receive data full) */
 #define VECTOR_NUMBER_SSI0_INT ((IRQn_Type) 23) /* SSI0 INT (Error interrupt) */
 #define SSI0_INT_IRQn          ((IRQn_Type) 23) /* SSI0 INT (Error interrupt) */
+#define VECTOR_NUMBER_SCI9_RXI ((IRQn_Type) 24) /* SCI9 RXI (Receive data full) */
+#define SCI9_RXI_IRQn          ((IRQn_Type) 24) /* SCI9 RXI (Receive data full) */
+#define VECTOR_NUMBER_SCI9_TXI ((IRQn_Type) 25) /* SCI9 TXI (Transmit data empty) */
+#define SCI9_TXI_IRQn          ((IRQn_Type) 25) /* SCI9 TXI (Transmit data empty) */
+#define VECTOR_NUMBER_SCI9_TEI ((IRQn_Type) 26) /* SCI9 TEI (Transmit end) */
+#define SCI9_TEI_IRQn          ((IRQn_Type) 26) /* SCI9 TEI (Transmit end) */
+#define VECTOR_NUMBER_SCI9_ERI ((IRQn_Type) 27) /* SCI9 ERI (Receive error) */
+#define SCI9_ERI_IRQn          ((IRQn_Type) 27) /* SCI9 ERI (Receive error) */
+#define VECTOR_NUMBER_SCI4_TXI ((IRQn_Type) 28) /* SCI4 TXI (Transmit data empty) */
+#define SCI4_TXI_IRQn          ((IRQn_Type) 28) /* SCI4 TXI (Transmit data empty) */
+#define VECTOR_NUMBER_SCI4_TEI ((IRQn_Type) 29) /* SCI4 TEI (Transmit end) */
+#define SCI4_TEI_IRQn          ((IRQn_Type) 29) /* SCI4 TEI (Transmit end) */
 /* The number of entries required for the ICU vector table. */
-#define BSP_ICU_VECTOR_NUM_ENTRIES (24)
+#define BSP_ICU_VECTOR_NUM_ENTRIES (30)
 
 #ifdef __cplusplus
         }

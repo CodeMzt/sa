@@ -24,8 +24,16 @@ from dataclasses import dataclass
 from statistics import mean
 from typing import List, Optional, Tuple
 
-MOTOR_COUNT = 5
-PACKET_SIZE = 44
+MOTOR_COUNT = 6
+HEADER_SIZE = 2
+FLOAT_SIZE = 4
+CHECKSUM_SIZE = 1
+TAIL_SIZE = 1
+ANGLES_OFFSET = HEADER_SIZE
+TORQUES_OFFSET = ANGLES_OFFSET + MOTOR_COUNT * FLOAT_SIZE
+CHECKSUM_OFFSET = TORQUES_OFFSET + MOTOR_COUNT * FLOAT_SIZE
+TAIL_OFFSET = CHECKSUM_OFFSET + CHECKSUM_SIZE
+PACKET_SIZE = TAIL_OFFSET + TAIL_SIZE
 
 
 @dataclass
@@ -44,13 +52,13 @@ def verify_packet(packet: bytes) -> bool:
         return False
 
     header0, header1 = struct.unpack_from("2B", packet, 0)
-    tail = struct.unpack_from("B", packet, 43)[0]
+    tail = struct.unpack_from("B", packet, TAIL_OFFSET)[0]
 
     if header0 != 0xA5 or header1 != 0x5A or tail != 0xED:
         return False
 
-    checksum_received = struct.unpack_from("B", packet, 42)[0]
-    checksum_calc = sum(packet[2:42]) & 0xFF
+    checksum_received = struct.unpack_from("B", packet, CHECKSUM_OFFSET)[0]
+    checksum_calc = sum(packet[ANGLES_OFFSET:CHECKSUM_OFFSET]) & 0xFF
     return checksum_received == checksum_calc
 
 

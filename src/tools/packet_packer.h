@@ -12,14 +12,21 @@
 #include <string.h> // for memcpy
 #include "shared_data.h"
 
-#define MOTOR_COUNT 5
-#define PACKET_SIZE 44 /* 2 + 20 + 20 + 1 + 1 */
+#define MOTOR_PACKET_MOTOR_COUNT   ROBSTRIDE_ACTIVE_MOTOR_NUM
+#define MOTOR_PACKET_HEADER_SIZE   2U
+#define MOTOR_PACKET_FLOAT_SIZE    4U
+#define MOTOR_PACKET_CHECKSUM_SIZE 1U
+#define MOTOR_PACKET_TAIL_SIZE     1U
+#define PACKET_SIZE                (MOTOR_PACKET_HEADER_SIZE + \
+                                   (MOTOR_PACKET_MOTOR_COUNT * MOTOR_PACKET_FLOAT_SIZE * 2U) + \
+                                   MOTOR_PACKET_CHECKSUM_SIZE + \
+                                   MOTOR_PACKET_TAIL_SIZE)
 
 /* 数据包结构体 */
 typedef struct __attribute__((packed)) {
     uint8_t  header[2];           
-    float    angles[MOTOR_COUNT]; 
-    float    torques[MOTOR_COUNT];
+    float    angles[MOTOR_PACKET_MOTOR_COUNT];
+    float    torques[MOTOR_PACKET_MOTOR_COUNT];
     uint8_t  checksum;            
     uint8_t  tail;
 } motor_packet_t;

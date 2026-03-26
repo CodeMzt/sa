@@ -14,8 +14,7 @@
 #include "lv_port.h"
 #include "lvgl\lvgl.h"
 #include "nvm_manager.h"
-#include "robstride_motor.h"
-#include "drv_canfd.h"
+#include "modules/servo/drv_servo.h"
 #include "shared_data.h"
 
 #define RAD2DEG_F 57.2957795130823208768f
@@ -44,7 +43,7 @@ void screen_interact_entry(void *pvParameters) {
     ui_app_init();
     LOG_I("Screen interact started.");
     while (1) {
-        canfd_link_check();
+        servo_link_check();
         ui_update_status();
         lv_timer_handler();
         vTaskDelay(pdMS_TO_TICKS(5));
@@ -74,14 +73,17 @@ void user_on_teach_save_frame(uint8_t group_idx, uint8_t frame_idx, uint16_t dur
     frame->angle_m2    = g_motors[1].feedback.position * RAD2DEG_F;
     frame->angle_m3    = g_motors[2].feedback.position * RAD2DEG_F;
     frame->angle_m4    = g_motors[3].feedback.position * RAD2DEG_F;
+    /* 兼容字段 angle_m5 现用于保存第 5 关节角度。 */
+    frame->angle_m5    = g_motors[4].feedback.position * RAD2DEG_F;
     frame->duration_ms = duration_ms;
     frame->action      = (uint8_t)action_type;
+    seq->joint_mask    = MOTION_JOINT_MASK_ALL;
 
     /* 更新帧计数 */
     if (frame_idx + 1 > seq->frame_count) seq->frame_count = (uint16_t)(frame_idx + 1);
 
-    LOG_D("[TEACH] Save frame G%d F%d (deg): M1=%.2f, M2=%.2f, M3=%.2f, M4=%.2f, dur=%dms, action=%d",
+    LOG_D("[TEACH] Save frame G%d F%d (deg): M1=%.2f, M2=%.2f, M3=%.2f, M4=%.2f, M5=%.2f, dur=%dms, action=%d",
           group_idx, frame_idx, 
-          frame->angle_m1, frame->angle_m2, frame->angle_m3, frame->angle_m4,
+          frame->angle_m1, frame->angle_m2, frame->angle_m3, frame->angle_m4, frame->angle_m5,
           duration_ms, action_type);
 }

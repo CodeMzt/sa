@@ -32,6 +32,7 @@ static uint32_t g_flash_wr  = NVM_ADDR_LOG_START;  /**< Flash 下一写入位置
 
 /* ---- 内部函数 ---- */
 static void        load_defaults(void);
+static bool        migrate_legacy_current_limits(void);
 static fsp_err_t   qspi_erase_write(uint32_t addr, uint8_t *data, uint32_t len);
 static fsp_err_t   qspi_write_only(uint32_t addr, uint8_t *data, uint32_t len);
 static fsp_err_t   qspi_read(uint32_t addr, uint8_t *data, uint32_t len);
@@ -99,6 +100,8 @@ fsp_err_t nvm_init(void) {
             g_nvm_init_state = 0U;
             return err;
         }
+    } else if (migrate_legacy_current_limits()) {
+        LOG_I("Applied legacy current_limit compatibility in RAM: %u mA", (unsigned int) MOTION_DEFAULT_CURRENT_LIMIT_MA);
     }
 
     /* 动作配置 */
@@ -109,9 +112,10 @@ fsp_err_t nvm_init(void) {
     }
 
     uint32_t motion_crc = calc_crc32((uint8_t *)&g_motion_cfg, sizeof(motion_config_t) - 4);
-    if (g_motion_cfg.crc32 != motion_crc) {
+    if ((g_motion_cfg.crc32 != motion_crc) || !nvm_is_motion_config_valid(&g_motion_cfg)) {
         LOG_D("Motion config invalid or erased, reset to default.");
         memset(&g_motion_cfg, 0, sizeof(motion_config_t));
+        g_motion_cfg.version = MOTION_CONFIG_VERSION;
         nvm_save_motion_config(&g_motion_cfg);
     }
 
@@ -167,6 +171,54 @@ fsp_err_t nvm_save_sys_config(const sys_config_t *new_cfg) {
  */
 const motion_config_t* nvm_get_motion_config(void) { return &g_motion_cfg; }
 
+static bool nvm_action_valid(uint8_t action) {
+    return (action == MOVE_ONLY) || (action == ACTION_GRIP) || (action == ACTION_RELEASE);
+}
+
+bool nvm_is_action_sequence_valid(const action_sequence_t *seq, bool allow_empty) {
+    if (seq == NULL) {
+        return false;
+    }
+
+    if (seq->frame_count == 0U) {
+        return allow_empty;
+    }
+
+    if ((seq->frame_count < 2U) || (seq->frame_count > MAX_FRAMES_PER_SEQ)) {
+        return false;
+    }
+
+    if ((seq->joint_mask & ~MOTION_JOINT_MASK_ALL) != 0U) {
+        return false;
+    }
+
+    for (uint32_t i = 0U; i < seq->frame_count; ++i) {
+        if ((i > 0U) && (seq->frames[i].duration_ms == 0U)) {
+            return false;
+        }
+
+        if (!nvm_action_valid(seq->frames[i].action)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool nvm_is_motion_config_valid(const motion_config_t *cfg) {
+    if (cfg == NULL) {
+        return false;
+    }
+
+    for (uint32_t i = 0U; i < TOTAL_ACTION_GROUPS; ++i) {
+        if (!nvm_is_action_sequence_valid(&cfg->groups[i], true)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 /**
  * @brief 保存动作配置
  * @param new_motion 新的动作配置
@@ -174,6 +226,7 @@ const motion_config_t* nvm_get_motion_config(void) { return &g_motion_cfg; }
  */
 fsp_err_t nvm_save_motion_config(const motion_config_t *new_motion) {
     if (new_motion == NULL) return FSP_ERR_ASSERTION;
+    if (!nvm_is_motion_config_valid(new_motion)) return FSP_ERR_INVALID_ARGUMENT;
 
     if (g_cfg_save_mutex != NULL) {
         if (xSemaphoreTake(g_cfg_save_mutex, pdMS_TO_TICKS(NVM_CFG_SAVE_LOCK_TIMEOUT_MS)) != pdTRUE) {
@@ -183,6 +236,7 @@ fsp_err_t nvm_save_motion_config(const motion_config_t *new_motion) {
     }
 
     memcpy(&g_motion_cfg, new_motion, sizeof(motion_config_t));
+    g_motion_cfg.version = MOTION_CONFIG_VERSION;
     g_motion_cfg.crc32 = calc_crc32((uint8_t *)&g_motion_cfg, sizeof(motion_config_t) - 4);
 
     fsp_err_t err = qspi_erase_write(NVM_ADDR_MOTION_SEQ, (uint8_t *)&g_motion_cfg, sizeof(motion_config_t));
@@ -324,16 +378,32 @@ static void load_defaults(void) {
     strncpy(g_sys_cfg.wifi_ssid, "SurgicalArm_Debug", sizeof(g_sys_cfg.wifi_ssid) - 1);
     strncpy(g_sys_cfg.wifi_psk,  "fdudebug",          sizeof(g_sys_cfg.wifi_psk) - 1);
 
-    g_sys_cfg.angle_min[0] = -9000;  g_sys_cfg.angle_max[0] =  9000;
-    g_sys_cfg.angle_min[1] = -4500;  g_sys_cfg.angle_max[1] = 13500;
-    g_sys_cfg.angle_min[2] = -6000;  g_sys_cfg.angle_max[2] = 12000;
-    g_sys_cfg.angle_min[3] = -6000;  g_sys_cfg.angle_max[3] = 12000;
+    /* 新串口舵机默认给较宽的软件限幅，后续由实机标定再收紧。 */
+    g_sys_cfg.angle_min[0] = -18000;  g_sys_cfg.angle_max[0] = 18000;
+    g_sys_cfg.angle_min[1] = -18000;  g_sys_cfg.angle_max[1] = 18000;
+    g_sys_cfg.angle_min[2] = -18000;  g_sys_cfg.angle_max[2] = 18000;
+    g_sys_cfg.angle_min[3] = -18000;  g_sys_cfg.angle_max[3] = 18000;
+    g_sys_cfg.angle_min[4] = -18000;  g_sys_cfg.angle_max[4] = 18000;
 
-    g_sys_cfg.current_limit[0] = 100;
-    g_sys_cfg.current_limit[1] = 100;
-    g_sys_cfg.current_limit[2] = 100;
-    g_sys_cfg.current_limit[3] = 100;
+    g_sys_cfg.current_limit[0] = MOTION_DEFAULT_CURRENT_LIMIT_MA;
+    g_sys_cfg.current_limit[1] = MOTION_DEFAULT_CURRENT_LIMIT_MA;
+    g_sys_cfg.current_limit[2] = MOTION_DEFAULT_CURRENT_LIMIT_MA;
+    g_sys_cfg.current_limit[3] = MOTION_DEFAULT_CURRENT_LIMIT_MA;
+    g_sys_cfg.current_limit[4] = MOTION_DEFAULT_CURRENT_LIMIT_MA;
     g_sys_cfg.grip_force_max   = 500;
+}
+
+static bool migrate_legacy_current_limits(void) {
+    bool changed = false;
+
+    for (uint32_t i = 0U; i < MOTION_JOINT_COUNT; ++i) {
+        if (g_sys_cfg.current_limit[i] == 100U) {
+            g_sys_cfg.current_limit[i] = MOTION_DEFAULT_CURRENT_LIMIT_MA;
+            changed = true;
+        }
+    }
+
+    return changed;
 }
 
 /**

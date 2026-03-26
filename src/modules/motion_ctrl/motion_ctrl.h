@@ -1,200 +1,258 @@
 /**
  * @file motion_ctrl.h
- * @brief 运控模式主控制器
- * @date 2026-02-27
- * @author Ma Ziteng
- * 
- * 运控主状态机下的机械臂示教/空闲/回放控制
- * 三种模式共用同一套控制器参数，仅目标生成行为不同：
- * 1. 示教模式：由 teach_jog 命令驱动单电机遥控
- * 2. 空闲模式：不发送周期控制指令，仅维持空闲状态
- * 3. 回放模式：按轨迹目标执行动作
+ * @brief 机械臂运动控制状态机接口
  */
 
 #ifndef MOTION_CTRL_H_
 #define MOTION_CTRL_H_
 
-#include <stdint.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include "robstride_motor.h"
-#include "gravity_comp.h"
 #include "trajectory.h"
 
-/* 控制器配置参数 */
-#define TEACH_MODE_LOOP_FREQ_HZ      100.0f   /* 示教模式控制频率 100Hz */
-#define TEACH_MODE_LOOP_PERIOD_MS    10.0f   /* 示教模式控制周期 10ms */
-#define PLAYBACK_MODE_LOOP_FREQ_HZ   100.0f  /* 回放模式控制频率 100Hz */
-#define PLAYBACK_MODE_LOOP_PERIOD_MS 10.0f    /* 回放模式控制周期 10ms */
-#define IDLE_MODE_LOOP_FREQ_HZ       100.0f   /* IDLE轮询频率 100Hz（无控制下发） */
-#define IDLE_MODE_LOOP_PERIOD_MS     10.0f    /* IDLE轮询周期 10ms */
+/* -------------------------------------------------------------------------- */
+/* 当前有效运控说明                                                            */
+/*                                                                            */
+/* 本模块是当前生效的中层运控状态机：                                          */
+/* 1. 关节 1~4 使用串口舵机模式位置插补；                                      */
+/* 2. 夹爪使用电机模式定扭矩；                                                  */
+/* 3. 上层动作队列、录帧/回放入口保持兼容。                                     */
+/*                                                                            */
+/* 注意：这里虽然仍复用了 `robstride_motor.h` 里的 ID、限位和镜像定义，但旧版     */
+/* CAN 运控函数本身已经不是当前有效控制路径。                                  */
+/* -------------------------------------------------------------------------- */
 
-/* 运行状态枚举 */
+#define TEACH_MODE_LOOP_FREQ_HZ      25.0f
+#define TEACH_MODE_LOOP_PERIOD_MS    40.0f
+#define PLAYBACK_MODE_LOOP_FREQ_HZ   33.3333f
+#define PLAYBACK_MODE_LOOP_PERIOD_MS 30.0f
+#define IDLE_MODE_LOOP_FREQ_HZ       50.0f
+#define IDLE_MODE_LOOP_PERIOD_MS     20.0f
+
+/**
+ * @brief 运控主状态
+ */
 typedef enum {
-    MOTION_STATE_IDLE = 0,      /* 空闲状态 */
-    MOTION_STATE_TEACHING,      /* 示教拖动模式 */
-    MOTION_STATE_PLAYBACK,      /* 回放模式 */
-    MOTION_STATE_ERROR          /* 错误状态 */
+    MOTION_STATE_IDLE = 0,
+    MOTION_STATE_TEACHING,
+    MOTION_STATE_PLAYBACK,
+    MOTION_STATE_ERROR
 } motion_state_t;
 
-/* 夹爪持续运控状态枚举 */
+/**
+ * @brief 夹爪持续控制状态
+ */
 typedef enum {
-    GRIPPER_HOLD_IDLE = 0,      /* 无持续命令 */
-    GRIPPER_HOLD_GRASP = 1,     /* 持续 grasp 状态 */
-    GRIPPER_HOLD_RELEASE = 2    /* 持续 release 状态（计时） */
+    GRIPPER_HOLD_IDLE = 0,
+    GRIPPER_HOLD_GRASP = 1,
+    GRIPPER_HOLD_RELEASE = 2
 } gripper_hold_state_t;
 
-/* 控制器配置 */
+/**
+ * @brief 触觉交接监控状态
+ */
+typedef enum {
+    HANDOFF_IDLE = 0,
+    HANDOFF_ARMED,
+    HANDOFF_RELEASE_ACTIVE,
+    HANDOFF_DONE
+} handoff_state_t;
+
+/**
+ * @brief 运控配置参数
+ */
 typedef struct {
-    /* 三种模式共用控制器参数 */
     struct {
-        float kp[4];            /* 位置刚度 */
-        float kd[4];            /* 阻尼系数 */
+        float kp[ROBSTRIDE_JOINT_NUM];
+        float kd[ROBSTRIDE_JOINT_NUM];
     } controller;
-    
-    /* 重力补偿参数 */
-    grav_param_t grav_params;   /* 重力补偿参数 */
-    
-    /* 安全参数 */
-    float max_torque[4];        /* 最大力矩限制（Nm） */
-    float max_velocity[4];      /* 最大速度限制（rad/s） */
+
+    float max_torque[ROBSTRIDE_JOINT_NUM];
+    float max_velocity[ROBSTRIDE_JOINT_NUM];
 } motion_ctrl_config_t;
 
-/* 控制器状态 */
+/**
+ * @brief 运控运行时上下文
+ */
 typedef struct {
-    motion_state_t state;       /* 当前运行状态 */
-    motion_ctrl_config_t config;     /* 当前配置 */
-    
-    /* 轨迹跟踪相关 */
-    traj_controller_t trajectory;  /* 轨迹控制器实例 */
-    action_sequence_t current_seq; /* 当前动作序列 */
-    bool seq_running;           /* 序列是否正在运行 */
-    float seq_start_time;       /* 序列开始时间（秒） */
+    motion_state_t state;
+    motion_ctrl_config_t config;
 
-    /* teach_jog 运行上下文（复用 TEACHING 状态） */
-    uint8_t teach_jog_motor_id; /* 当前遥控电机ID，0表示无活动遥控 */
-    float teach_jog_q_ref;      /* 遥控位置参考（关节侧rad） */
-    bool teach_jog_q_valid;     /* 遥控位置参考是否已初始化 */
-    
-    /* 夹爪持续运控状态 */
-    gripper_hold_state_t gripper_hold_state;    /* 夹爪持续状态 */
-    float gripper_close_position;               /* grasp 目标位置 */
-    float gripper_kp, gripper_kd;               /* grasp Kp/Kd */
-    float gripper_release_timer;                /* release 计时器（秒）*/
-    
-    /* 状态标志 */
-    bool is_initialized;        /* 是否已初始化 */
-    bool emergency_stop;        /* 急停标志 */
+    traj_controller_t trajectory;
+    float seq_start_time;
+    float playback_upload_q[ROBSTRIDE_ACTIVE_JOINT_NUM];
+    bool playback_upload_q_valid;
+
+    float hold_q_ref[ROBSTRIDE_JOINT_NUM];
+    bool hold_q_valid;
+    bool idle_lock_active;
+    bool teach_locked;
+    float teach_lock_q[ROBSTRIDE_JOINT_NUM];
+    float teach_prev_q[ROBSTRIDE_JOINT_NUM];
+    float teach_settle_s;
+
+    uint8_t teach_jog_motor_id;
+    float teach_jog_q_ref;
+    bool teach_jog_q_valid;
+    uint16_t teach_jog_gripper_cmd_ref;
+    bool teach_jog_gripper_cmd_valid;
+    bool teach_jog_engaged;
+    bool teach_jog_hold_active;
+    int8_t teach_jog_hold_direction;
+    uint8_t teach_jog_hold_step_level;
+    float teach_jog_hold_elapsed_s;
+
+    gripper_hold_state_t gripper_hold_state;
+    handoff_state_t handoff_state;
+    float gripper_release_timer;
+    float gripper_keepalive_timer;
+    float gripper_action_pause_s;
+    float handoff_release_stop_timer;
+
+    bool is_initialized;
+    bool emergency_stop;
+    uint8_t torque_limit_cycles[ROBSTRIDE_JOINT_NUM];
 } motion_controller_t;
 
-/* 全局控制器实例 */
+/**
+ * @brief 全局运控实例
+ */
 extern motion_controller_t g_motion_ctrl;
 
 /**
- * @brief 初始化运控控制器
- * @param ctrl 控制器实例指针
- * @param config 配置参数（可为NULL使用默认配置）
- * @return true 成功，false 失败
- * @note 必须在使用前调用，控制输出与反馈读取均由本模块直接处理
+ * @brief 初始化运控状态机
+ * @param ctrl 控制器实例
+ * @param config 配置参数，传 NULL 使用默认值
+ * @return true 成功
+ * @return false 失败
  */
 bool motion_ctrl_init(motion_controller_t *ctrl, const motion_ctrl_config_t *config);
 
 /**
- * @brief 设置控制模式（从其他模式切换到运控模式）
- * @param ctrl 控制器实例指针
- * @return true 成功，false 失败
- * @note 将关节1~4切换到运控模式并重新使能
+ * @brief 让关节回到串口舵机模式
+ * @param ctrl 控制器实例
+ * @return true 成功
+ * @return false 失败
  */
 bool motion_ctrl_set_motion_mode(motion_controller_t *ctrl);
 
 /**
- * @brief 启动示教遥控模式
- * @param ctrl 控制器实例指针
- * @return true 成功，false 失败
+ * @brief 进入示教模式
+ * @param ctrl 控制器实例
+ * @return true 成功
+ * @return false 失败
  */
 bool motion_ctrl_start_teaching(motion_controller_t *ctrl);
 
 /**
- * @brief 启动回放模式
- * @param ctrl 控制器实例指针
- * @param seq 要回放的动作序列
- * @return true 成功，false 失败
+ * @brief 启动轨迹回放
+ * @param ctrl 控制器实例
+ * @param seq 动作序列
+ * @return true 成功
+ * @return false 失败
  */
 bool motion_ctrl_start_playback(motion_controller_t *ctrl, const action_sequence_t *seq);
 
 /**
- * @brief 停止当前运行模式
- * @param ctrl 控制器实例指针
- * @note 硬停：下发电机STOP后切换到空闲状态
+ * @brief 停止当前动作并切换到姿态保持
+ * @param ctrl 控制器实例
  */
 void motion_ctrl_stop(motion_controller_t *ctrl);
 
 /**
- * @brief 清除当前遥控命令并可选停止最后一个遥控电机
- * @param ctrl 控制器实例指针
- * @param stop_last_motor true: 下发 stop；false: 仅清状态
+ * @brief 清除 teach_jog 命令
+ * @param ctrl 控制器实例
+ * @param stop_last_motor 是否停止最后一个被遥控的电机
  */
 void motion_ctrl_clear_teach_jog(motion_controller_t *ctrl, bool stop_last_motor);
 
 /**
- * @brief 运控模式主控制循环（应按当前模式控制周期调用，默认100Hz）
- * @param ctrl 控制器实例指针
- * @param dt 时间步长（秒）
- * @note TEACH/PLAYBACK下发控制，IDLE仅维护状态不下发
+ * @brief 进入触觉交接等待态
+ * @param ctrl 控制器实例
+ */
+void motion_ctrl_arm_handoff_wait(motion_controller_t *ctrl);
+
+/**
+ * @brief 重置触觉交接等待态
+ * @param ctrl 控制器实例
+ */
+void motion_ctrl_reset_handoff_wait(motion_controller_t *ctrl);
+
+/**
+ * @brief 查询交接释放流程是否完成
+ * @param ctrl 控制器实例
+ * @return true 已完成，可继续后续动作
+ * @return false 尚未完成
+ */
+bool motion_ctrl_is_handoff_done(const motion_controller_t *ctrl);
+
+/**
+ * @brief 运行一次状态机控制循环
+ * @param ctrl 控制器实例
+ * @param dt 控制周期，单位 s
  */
 void motion_ctrl_loop(motion_controller_t *ctrl, float dt);
 
 /**
  * @brief 获取当前状态
- * @param ctrl 控制器实例指针
- * @return 当前运行状态
+ * @param ctrl 控制器实例
+ * @return 当前状态
  */
 motion_state_t motion_ctrl_get_state(const motion_controller_t *ctrl);
 
 /**
- * @brief 设置重力补偿参数
- * @param ctrl 控制器实例指针
+ * @brief 更新重力补偿参数
+ * @param ctrl 控制器实例
  * @param params 重力补偿参数
  */
-void motion_ctrl_set_grav_params(motion_controller_t *ctrl, const grav_param_t *params);
 
 /**
- * @brief 设置示教模式参数
- * @param ctrl 控制器实例指针
- * @param kp 位置刚度数组（长度4）
- * @param kd 阻尼系数数组（长度4）
- * @param enable_joint1 兼容保留参数，不再生效
- * @note 本接口会更新三种模式共用的控制器参数
+ * @brief 更新示教模式控制参数
+ * @param ctrl 控制器实例
+ * @param kp 刚度参数
+ * @param kd 阻尼参数
+ * @param enable_joint1 兼容保留参数，目前不再生效
  */
-void motion_ctrl_set_teach_params(motion_controller_t *ctrl, const float kp[4], 
-                                  const float kd[4], bool enable_joint1);
+void motion_ctrl_set_teach_params(motion_controller_t *ctrl,
+                                  const float kp[ROBSTRIDE_JOINT_NUM],
+                                  const float kd[ROBSTRIDE_JOINT_NUM],
+                                  bool enable_joint1);
 
 /**
- * @brief 设置回放模式参数
- * @param ctrl 控制器实例指针
- * @param kp 位置刚度数组（长度4）
- * @param kd 阻尼系数数组（长度4）
- * @note 本接口会更新三种模式共用的控制器参数
+ * @brief 更新回放模式控制参数
+ * @param ctrl 控制器实例
+ * @param kp 刚度参数
+ * @param kd 阻尼参数
  */
-void motion_ctrl_set_playback_params(motion_controller_t *ctrl, const float kp[4], 
-                                     const float kd[4]);
+void motion_ctrl_set_playback_params(motion_controller_t *ctrl,
+                                     const float kp[ROBSTRIDE_JOINT_NUM],
+                                     const float kd[ROBSTRIDE_JOINT_NUM]);
 
 /**
  * @brief 触发急停
- * @param ctrl 控制器实例指针
+ * @param ctrl 控制器实例
  */
 void motion_ctrl_emergency_stop(motion_controller_t *ctrl);
 
 /**
  * @brief 清除急停状态
- * @param ctrl 控制器实例指针
+ * @param ctrl 控制器实例
  */
 void motion_ctrl_clear_emergency_stop(motion_controller_t *ctrl);
 
+/**
+ * @brief 力矩保护触发回调
+ * @param joint_index 触发保护的关节索引，范围 0~3
+ * @param torque_feedback 触发时的实时力矩代理值
+ * @param torque_limit 配置的保护阈值
+ */
+void motion_ctrl_on_torque_protection(uint8_t joint_index, float torque_feedback, float torque_limit);
 
 /**
- * @brief 获取当前模式的控制周期（ms）
- * @param state 当前运行状态
- * @return 控制周期（ms）
+ * @brief 获取当前状态对应的控制周期
+ * @param state 当前状态
+ * @return 控制周期，单位 ms
  */
 static inline float get_ctrl_period(motion_state_t state) {
     switch (state) {
@@ -205,7 +263,7 @@ static inline float get_ctrl_period(motion_state_t state) {
         case MOTION_STATE_IDLE:
             return IDLE_MODE_LOOP_PERIOD_MS;
         default:
-            return PLAYBACK_MODE_LOOP_PERIOD_MS;  /* 默认使用回放模式频率 */
+            return PLAYBACK_MODE_LOOP_PERIOD_MS;
     }
 }
 

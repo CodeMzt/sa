@@ -27,10 +27,12 @@ void grav_init_default(grav_param_t *gp) {
     gp->cos234_coeff = DEFAULT_COS234_COEFF;
 }
 
-void grav_compute(const grav_param_t *gp, const float q[4], float tau_ff_out[4]) {
+void grav_compute(const grav_param_t *gp,
+                  const float q[MOTION_JOINT_COUNT],
+                  float tau_ff_out[MOTION_JOINT_COUNT]) {
     if (gp == NULL || q == NULL || tau_ff_out == NULL) {
         /* 参数无效时清零输出 */
-        for (int i = 0; i < 4; i++) tau_ff_out[i] = 0.0f;
+        for (int i = 0; i < MOTION_JOINT_COUNT; i++) tau_ff_out[i] = 0.0f;
         return;
     }
     
@@ -39,6 +41,10 @@ void grav_compute(const grav_param_t *gp, const float q[4], float tau_ff_out[4])
     float s23 = sinf(q[1] + q[2]), c23 = cosf(q[1] + q[2]);
     float s234 = sinf(q[1] + q[2] + q[3]), c234 = cosf(q[1] + q[2] + q[3]);
     
+    for (int i = 0; i < MOTION_JOINT_COUNT; i++) {
+        tau_ff_out[i] = 0.0f;
+    }
+
     tau_ff_out[0] = 0.0f;
     tau_ff_out[1] = gp->sin2_coeff * s2 + gp->cos2_coeff * c2 + 
                     gp->sin23_coeff * s23 + gp->cos23_coeff * c23 + 

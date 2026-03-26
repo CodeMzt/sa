@@ -4,13 +4,14 @@
  * @date 2026-02-27
  * @author Ma Ziteng
  * 
- * 重力补偿计算接口，为4关节机械臂提供简化重力模型
+ * 重力补偿计算接口，为 5 关节机械臂提供简化重力模型
  * 用于抵消重力对关节2~4的影响
  */
 
 #ifndef GRAVITY_COMP_H_
 #define GRAVITY_COMP_H_
 
+#include "nvm_types.h"
 #include <stdint.h>
 #include <stdbool.h>
 
@@ -44,7 +45,9 @@ void grav_init_default(grav_param_t *gp);
  *              sin234_coeff*sin(q2+q3+q4) + cos234_coeff*cos(q2+q3+q4)
  *       tau4 = sin234_coeff*sin(q2+q3+q4) + cos234_coeff*cos(q2+q3+q4)
  */
-void grav_compute(const grav_param_t *gp, const float q[4], float tau_ff_out[4]);
+void grav_compute(const grav_param_t *gp,
+                  const float q[MOTION_JOINT_COUNT],
+                  float tau_ff_out[MOTION_JOINT_COUNT]);
 
 /**
  * @brief 设置重力补偿参数

@@ -10,19 +10,17 @@
 #include "drv_wifi.h"
 #include "nvm_manager.h"
 #include "shared_data.h"
-#include "robstride_motor.h"
+#include "modules/servo/drv_servo.h"
 #include "test_mode.h"
 
 static void reset_teach_jog_cmd_with_stop(void) {
-    uint8_t motor_id = g_teach_jog_cmd.motor_id;
+    teach_jog_hold_cmd_t hold = {0};
+    teach_jog_hold_read(&hold);
+    uint8_t motor_id = hold.motor_id;
+    teach_jog_hold_clear();
 
-    g_teach_jog_cmd.active = false;
-    g_teach_jog_cmd.motor_id = 0U;
-    g_teach_jog_cmd.vel_centi_rad_s = 0;
-    g_teach_jog_cmd.last_update_tick = 0U;
-
-    if (is_motor_id_valid(motor_id)) {
-        (void)robstride_stop(motor_id);
+    if (hold.active && is_motor_id_valid(motor_id)) {
+        (void)servo_stop_motor(motor_id, true);
     }
 }
 

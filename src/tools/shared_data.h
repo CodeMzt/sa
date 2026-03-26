@@ -8,6 +8,7 @@
 #ifndef SHARED_DATA_H_
 #define SHARED_DATA_H_
 
+#include <stddef.h>
 #include "hal_data.h"
 #include "robstride_motor.h"
 
@@ -22,6 +23,7 @@ typedef enum {
 typedef struct {
     bool is_eth_connected;
     bool is_can_connected;
+    bool is_motion_link_connected;
     bool is_mic_connected;
     bool is_wifi_connected;
     bool is_debug_mode_active;
@@ -40,12 +42,12 @@ typedef struct {
 typedef struct {
     bool active;
     uint8_t motor_id;
-    int16_t vel_centi_rad_s;
+    int8_t direction;
+    uint8_t step_level;
     uint32_t last_update_tick;
-} teach_jog_cmd_t;
+} teach_jog_hold_cmd_t;
 
 extern volatile system_status_t g_sys_status;
-extern volatile teach_jog_cmd_t g_teach_jog_cmd;
 extern volatile bool g_log_system_ready;
 
 /* 全局电机数组（由 robstride_motor.c 定义，此处导出） */
@@ -59,7 +61,18 @@ bool is_instrument_in_queue(instrument_t inst);
 bool add_instrument(instrument_t inst);
 void remove_instrument(uint8_t index);
 void clear_act_queue(void);
+uint8_t queue_count_get(void);
+bool queue_head_peek(instrument_t *inst, uint8_t *queue_count);
+void queue_text_get(char *buffer, size_t buffer_size);
 const char* get_instrument_name(instrument_t inst);
 void update_queue_display(void);
+
+void teach_jog_hold_read(teach_jog_hold_cmd_t *cmd);
+void teach_jog_hold_set(uint8_t motor_id, int8_t direction, uint8_t step_level, uint32_t last_update_tick);
+void teach_jog_hold_clear(void);
+bool teach_jog_hold_active(void);
+
+void motion_link_set(bool connected);
+bool motion_link_is_up(void);
 
 #endif /* SHARED_DATA_H_ */

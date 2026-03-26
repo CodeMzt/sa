@@ -15,6 +15,8 @@ extern void wifi_debug_create(void);
 extern TaskHandle_t wifi_debug;
 extern void voice_command_create(void);
 extern TaskHandle_t voice_command;
+extern void servo_bus_create(void);
+extern TaskHandle_t servo_bus;
 uint32_t g_fsp_common_thread_count;
 bool g_fsp_common_initialized;
 SemaphoreHandle_t g_fsp_common_initialized_semaphore;
@@ -118,6 +120,7 @@ int main(void)
     screen_interact_create ();
     wifi_debug_create ();
     voice_command_create ();
+    servo_bus_create ();
 
     /* Start the scheduler. */
     vTaskStartScheduler ();

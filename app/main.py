@@ -210,13 +210,19 @@ def main(page: ft.Page):
     _log_reading = {"active": False, "buf": b"", "page": 0, "max_pages": 4}  # 多页读取状态
 
     # 运动配置显示与编辑
-    FRAME_SIZE = 4 + 4 + 4 + 4 + 2 + 1
+    MOTION_JOINT_COUNT = 5
+    GRIPPER_MOTOR_ID = 6
+    MOTION_CONFIG_VERSION = 0x00020000
+    MOTION_JOINT_MASK_ALL = 0x1F
+    GROUP_HEADER_SIZE = 4 + 1 + 15
+    FRAME_SIZE = MOTION_JOINT_COUNT * 4 + 2 + 1
     MAX_FRAMES = 10
-    GROUP_SIZE = 4 + 16 + MAX_FRAMES * FRAME_SIZE
+    GROUP_SIZE = GROUP_HEADER_SIZE + MAX_FRAMES * FRAME_SIZE
     TOTAL_ACTION_GROUPS = 7
-    MOTION_RAW_SIZE = TOTAL_ACTION_GROUPS * GROUP_SIZE + 4
+    MOTION_RAW_SIZE = 4 + TOTAL_ACTION_GROUPS * GROUP_SIZE + 4
+    motion_view_height = 220 if is_mobile else 320
 
-    motion_data_view = ft.ListView(expand=True, spacing=2, auto_scroll=False)
+    motion_data_view = ft.Column(height=motion_view_height, spacing=2, scroll="auto")
     ACTION_NAMES = {0: "移动", 1: "抓取", 2: "释放"}
 
     motion_write_supported = {"ok": True}
@@ -226,8 +232,9 @@ def main(page: ft.Page):
 
     def _blank_motion_model():
         return {
+            "version": MOTION_CONFIG_VERSION,
             "groups": [
-                {"name": "", "frames": []}
+                {"name": "", "joint_mask": MOTION_JOINT_MASK_ALL, "frames": []}
                 for _ in range(TOTAL_ACTION_GROUPS)
             ]
         }
@@ -252,6 +259,7 @@ def main(page: ft.Page):
     frame_m2 = ft.TextField(label="M2(°)", value="0", expand=True, border_color=ACCENT_DIM, focused_border_color=ACCENT, on_submit=blur)
     frame_m3 = ft.TextField(label="M3(°)", value="0", expand=True, border_color=ACCENT_DIM, focused_border_color=ACCENT, on_submit=blur)
     frame_m4 = ft.TextField(label="M4(°)", value="0", expand=True, border_color=ACCENT_DIM, focused_border_color=ACCENT, on_submit=blur)
+    frame_m5 = ft.TextField(label="M5(°)", value="0", expand=True, border_color=ACCENT_DIM, focused_border_color=ACCENT, on_submit=blur)
     frame_dur = ft.TextField(label="耗时(ms)", value="500", width=140, border_color=ACCENT_DIM, focused_border_color=ACCENT, on_submit=blur)
     frame_act = ft.Dropdown(
         label="动作", value="0", width=140,
@@ -266,9 +274,9 @@ def main(page: ft.Page):
     motion_del_frame_btn = ft.Button("删除帧", icon=ft.Icons.REMOVE)
     motion_save_btn = ft.Button("保存到设备", icon=ft.Icons.SAVE)
 
-    JOG_SPEED_OPTIONS = [i * 0.05 for i in range(1, 11)]
-    JOG_SPEED_DEFAULT = 0.05
-    JOG_PERIOD_S = 0.10
+    JOINT_JOG_STEP_OPTIONS = [("0", "0.4°"), ("1", "1.0°"), ("2", "2.0°")]
+    GRIPPER_JOG_STEP_OPTIONS = [("0", "小"), ("1", "中"), ("2", "大")]
+    JOG_STEP_DEFAULT = "0"
     jog_motor_dd = ft.Dropdown(
         label="电机",
         value="1",
@@ -278,25 +286,26 @@ def main(page: ft.Page):
             ft.dropdown.Option("2", "J2"),
             ft.dropdown.Option("3", "J3"),
             ft.dropdown.Option("4", "J4"),
-            ft.dropdown.Option("5", "GRIPPER"),
+            ft.dropdown.Option("5", "J5"),
+            ft.dropdown.Option("6", "GRIPPER"),
         ],
         border_color=ACCENT_DIM,
         focused_border_color=ACCENT,
     )
-    jog_speed_dd = ft.Dropdown(
-        label="速度(rad/s)",
-        value=f"{JOG_SPEED_DEFAULT:.2f}",
+    jog_step_dd = ft.Dropdown(
+        label="Step",
+        value=JOG_STEP_DEFAULT,
         width=150,
         options=[
-            ft.dropdown.Option(f"{s:.2f}", f"{s:.2f}")
-            for s in JOG_SPEED_OPTIONS
+            ft.dropdown.Option(value, label)
+            for value, label in JOINT_JOG_STEP_OPTIONS
         ],
         border_color=ACCENT_DIM,
         focused_border_color=ACCENT,
     )
-    jog_status_text = ft.Text("状态: 停止 | 速度 0.05 rad/s", size=12, color=TEXT_DIM)
-    jog_state = {"active": False, "motor_id": 1, "direction": 0, "speed": JOG_SPEED_DEFAULT}
-    jog_stop_event = {"evt": threading.Event()}
+    jog_status_text = ft.Text("Status: Stopped | Step 0.4°", size=12, color=TEXT_DIM)
+    jog_state = {"active": False, "motor_id": 1, "direction": 0, "step_level": 0}
+    jog_status_text.value = "Status: Stopped | Step 0.4°"
 
     if is_mobile:
         port_input.width = None
@@ -311,8 +320,8 @@ def main(page: ft.Page):
         frame_act.expand = True
         jog_motor_dd.width = None
         jog_motor_dd.expand = True
-        jog_speed_dd.width = None
-        jog_speed_dd.expand = True
+        jog_step_dd.width = None
+        jog_step_dd.expand = True
         motion_add_frame_btn.expand = True
         motion_del_frame_btn.expand = True
 
@@ -340,8 +349,9 @@ def main(page: ft.Page):
             raw = raw[:MOTION_RAW_SIZE]
 
         model = _blank_motion_model()
+        model["version"] = struct.unpack_from('<I', raw, 0)[0]
         for g in range(TOTAL_ACTION_GROUPS):
-            off = g * GROUP_SIZE
+            off = 4 + g * GROUP_SIZE
             group_raw = raw[off:off + GROUP_SIZE]
             if len(group_raw) < GROUP_SIZE:
                 continue
@@ -350,49 +360,54 @@ def main(page: ft.Page):
                 continue
 
             frame_count = struct.unpack_from('<I', raw, off)[0]
-            name_bytes = raw[off + 4:off + 20]
+            joint_mask = raw[off + 4]
+            name_bytes = raw[off + 5:off + GROUP_HEADER_SIZE]
             try:
                 name = name_bytes.split(b'\x00')[0].decode('utf-8', errors='replace')
             except Exception:
                 name = ""
 
             model["groups"][g]["name"] = name
+            model["groups"][g]["joint_mask"] = int(joint_mask)
             fc = min(int(frame_count), MAX_FRAMES)
             for f in range(fc):
-                foff = off + 20 + f * FRAME_SIZE
+                foff = off + GROUP_HEADER_SIZE + f * FRAME_SIZE
                 if foff + FRAME_SIZE > len(raw):
                     break
-                m1, m2, m3, m4 = struct.unpack_from('<ffff', raw, foff)
-                dur = struct.unpack_from('<H', raw, foff + 16)[0]
-                act = raw[foff + 18]
+                m1, m2, m3, m4, m5 = struct.unpack_from('<fffff', raw, foff)
+                dur = struct.unpack_from('<H', raw, foff + 20)[0]
+                act = raw[foff + 22]
                 model["groups"][g]["frames"].append({
-                    "m1": float(m1), "m2": float(m2), "m3": float(m3), "m4": float(m4),
+                    "m1": float(m1), "m2": float(m2), "m3": float(m3), "m4": float(m4), "m5": float(m5),
                     "duration_ms": int(dur), "action": int(act),
                 })
         return model
 
     def _motion_model_to_hex(model):
         raw = bytearray(MOTION_RAW_SIZE)
+        struct.pack_into('<I', raw, 0, int(model.get("version", MOTION_CONFIG_VERSION)))
         for g in range(TOTAL_ACTION_GROUPS):
             group = model["groups"][g]
             frames = group.get("frames", [])[:MAX_FRAMES]
-            off = g * GROUP_SIZE
+            off = 4 + g * GROUP_SIZE
 
             struct.pack_into('<I', raw, off, len(frames))
+            raw[off + 4] = int(group.get("joint_mask", MOTION_JOINT_MASK_ALL)) & MOTION_JOINT_MASK_ALL
 
             name = (group.get("name") or "").encode('utf-8', errors='ignore')[:15]
-            raw[off + 4:off + 20] = b"\x00" * 16
-            raw[off + 4:off + 4 + len(name)] = name
+            raw[off + 5:off + GROUP_HEADER_SIZE] = b"\x00" * 15
+            raw[off + 5:off + 5 + len(name)] = name
 
             for f, frame in enumerate(frames):
-                foff = off + 20 + f * FRAME_SIZE
-                struct.pack_into('<ffff', raw, foff,
+                foff = off + GROUP_HEADER_SIZE + f * FRAME_SIZE
+                struct.pack_into('<fffff', raw, foff,
                                  float(frame.get("m1", 0.0)),
                                  float(frame.get("m2", 0.0)),
                                  float(frame.get("m3", 0.0)),
-                                 float(frame.get("m4", 0.0)))
-                struct.pack_into('<H', raw, foff + 16, max(0, min(65535, int(frame.get("duration_ms", 0)))))
-                raw[foff + 18] = max(0, min(255, int(frame.get("action", 0))))
+                                 float(frame.get("m4", 0.0)),
+                                 float(frame.get("m5", 0.0)))
+                struct.pack_into('<H', raw, foff + 20, max(0, min(65535, int(frame.get("duration_ms", 0)))))
+                raw[foff + 22] = max(0, min(255, int(frame.get("action", 0))))
 
         return raw.hex().upper()
 
@@ -417,15 +432,21 @@ def main(page: ft.Page):
 
             for f, frame in enumerate(frames):
                 act_name = ACTION_NAMES.get(int(frame.get("action", 0)), f"动作{frame.get('action', 0)}")
-                angles_text = (
-                    f"M1:{float(frame.get('m1', 0)):7.1f}°  M2:{float(frame.get('m2', 0)):7.1f}°  "
-                    f"M3:{float(frame.get('m3', 0)):7.1f}°  M4:{float(frame.get('m4', 0)):7.1f}°"
+                angle_line_1 = "  ".join(
+                    f"M{i}:{float(frame.get(f'm{i}', 0)):7.1f}deg"
+                    for i in range(1, 4)
+                )
+                angle_line_2 = "  ".join(
+                    f"M{i}:{float(frame.get(f'm{i}', 0)):7.1f}deg"
+                    for i in range(4, MOTION_JOINT_COUNT + 1)
                 )
                 duration_text = f"耗时 {int(frame.get('duration_ms', 0))}ms  ┃  {act_name}"
                 motion_data_view.controls.append(
                     ft.Container(
                         content=ft.Column([
-                            ft.Text(f"  帧{f}  {angles_text}", size=10, color="#CFD8DC", font_family="monospace"),
+                            ft.Text(f"  帧{f}", size=10, color="#CFD8DC", font_family="monospace"),
+                            ft.Text(f"       {angle_line_1}", size=10, color="#CFD8DC", font_family="monospace"),
+                            ft.Text(f"       {angle_line_2}", size=10, color="#CFD8DC", font_family="monospace"),
                             ft.Text(f"       {duration_text}", size=10, color="#90A4AE"),
                         ], spacing=2),
                         padding=ft.Padding(top=6, bottom=6, left=8, right=8),
@@ -454,6 +475,7 @@ def main(page: ft.Page):
         frame_m2.disabled = not enabled or not has_frame
         frame_m3.disabled = not enabled or not has_frame
         frame_m4.disabled = not enabled or not has_frame
+        frame_m5.disabled = not enabled or not has_frame
         frame_dur.disabled = not enabled or not has_frame
         frame_act.disabled = not enabled or not has_frame
         motion_add_frame_btn.disabled = not enabled
@@ -494,6 +516,7 @@ def main(page: ft.Page):
             frame_m2.value = f"{float(frame.get('m2', 0.0)):.2f}"
             frame_m3.value = f"{float(frame.get('m3', 0.0)):.2f}"
             frame_m4.value = f"{float(frame.get('m4', 0.0)):.2f}"
+            frame_m5.value = f"{float(frame.get('m5', 0.0)):.2f}"
             frame_dur.value = str(int(frame.get("duration_ms", 0)))
             frame_act.value = str(int(frame.get("action", 0)))
         else:
@@ -501,6 +524,7 @@ def main(page: ft.Page):
             frame_m2.value = "0"
             frame_m3.value = "0"
             frame_m4.value = "0"
+            frame_m5.value = "0"
             frame_dur.value = "500"
             frame_act.value = "0"
 
@@ -516,6 +540,7 @@ def main(page: ft.Page):
 
         group = motion_model["groups"][g_idx]
         group["name"] = (motion_group_name.value or "").strip()
+        group["joint_mask"] = MOTION_JOINT_MASK_ALL
         frames = group["frames"]
         if not frames:
             return
@@ -529,6 +554,7 @@ def main(page: ft.Page):
             "m2": _safe_float(frame_m2.value, 0.0),
             "m3": _safe_float(frame_m3.value, 0.0),
             "m4": _safe_float(frame_m4.value, 0.0),
+            "m5": _safe_float(frame_m5.value, 0.0),
             "duration_ms": max(0, min(65535, _safe_int(frame_dur.value, 500))),
             "action": max(0, min(255, _safe_int(frame_act.value, 0))),
         }
@@ -559,7 +585,7 @@ def main(page: ft.Page):
             toast(f"单组最多 {MAX_FRAMES} 帧", "#E65100")
             return
         group["frames"].append({
-            "m1": 0.0, "m2": 0.0, "m3": 0.0, "m4": 0.0,
+            "m1": 0.0, "m2": 0.0, "m3": 0.0, "m4": 0.0, "m5": 0.0,
             "duration_ms": 500, "action": 0,
         })
         selected_frame_idx["value"] = len(group["frames"]) - 1
@@ -724,13 +750,13 @@ def main(page: ft.Page):
                             current_limit = obj.get("current_limit", None)
                             grip_force_max = obj.get("grip_force_max", None)
                             if angle_min and isinstance(angle_min, list):
-                                for i in range(min(4, len(angle_min))):
+                                for i in range(min(MOTION_JOINT_COUNT, len(angle_min))):
                                     angle_min_fields[i].value = str(angle_min[i])
                             if angle_max and isinstance(angle_max, list):
-                                for i in range(min(4, len(angle_max))):
+                                for i in range(min(MOTION_JOINT_COUNT, len(angle_max))):
                                     angle_max_fields[i].value = str(angle_max[i])
                             if current_limit and isinstance(current_limit, list):
-                                for i in range(min(4, len(current_limit))):
+                                for i in range(min(MOTION_JOINT_COUNT, len(current_limit))):
                                     current_limit_fields[i].value = str(current_limit[i])
                             if grip_force_max is not None:
                                 grip_force_max_field.value = str(grip_force_max)
@@ -986,37 +1012,69 @@ def main(page: ft.Page):
         page.update()
 
     def _selected_jog_motor_id():
-        return max(1, min(5, _safe_int(jog_motor_dd.value, 1)))
+        return max(1, min(GRIPPER_MOTOR_ID, _safe_int(jog_motor_dd.value, 1)))
 
-    def _selected_jog_speed():
-        speed = _safe_float(jog_speed_dd.value, JOG_SPEED_DEFAULT)
-        speed = max(0.05, min(0.5, speed))
-        return round(speed, 2)
+    def _is_gripper_jog_motor(motor_id=None):
+        if motor_id is None:
+            motor_id = _selected_jog_motor_id()
+        return int(motor_id) == GRIPPER_MOTOR_ID
+
+    def _jog_step_options_for_motor(motor_id=None):
+        return GRIPPER_JOG_STEP_OPTIONS if _is_gripper_jog_motor(motor_id) else JOINT_JOG_STEP_OPTIONS
+
+    def _refresh_jog_step_dropdown():
+        options = _jog_step_options_for_motor()
+        valid_values = {value for value, _label in options}
+        current_value = str(jog_step_dd.value or JOG_STEP_DEFAULT)
+        if current_value not in valid_values:
+            current_value = JOG_STEP_DEFAULT
+        jog_step_dd.label = "Grip Step" if _is_gripper_jog_motor() else "Step"
+        jog_step_dd.options = [ft.dropdown.Option(value, label) for value, label in options]
+        jog_step_dd.value = current_value
+
+    def _selected_jog_step_level():
+        return max(0, min(2, _safe_int(jog_step_dd.value, int(JOG_STEP_DEFAULT))))
+
+    def _selected_jog_step_label():
+        step_level = str(_selected_jog_step_level())
+        for value, label in _jog_step_options_for_motor():
+            if value == step_level:
+                return label
+        return _jog_step_options_for_motor()[0][1]
 
     def _set_jog_status(text, color=TEXT_DIM):
-        jog_status_text.value = f"状态: {text} | 速度 {_selected_jog_speed():.2f} rad/s"
+        unit_label = "Grip" if _is_gripper_jog_motor() else "Step"
+        jog_status_text.value = f"Status: {text} | {unit_label} {_selected_jog_step_label()}"
         jog_status_text.color = color
 
-    def _send_teach_jog(motor_id, vel, log_tx=False, silent_error=False):
+    def _send_teach_jog_hold_start(motor_id, direction, step_level, log_tx=False, silent_error=False):
         return send_cmd(
-            {"cmd": "teach_jog", "motor_id": int(motor_id), "vel": float(vel)},
+            {
+                "cmd": "teach_jog_hold_start",
+                "motor_id": int(motor_id),
+                "dir": int(direction),
+                "step_level": int(step_level),
+            },
             expect_response=False,
             log_tx=log_tx,
             silent_error=silent_error,
         )
 
-    def jog_release(send_stop=True):
-        was_active = jog_state["active"]
-        motor_id = jog_state["motor_id"]
+    def _send_teach_jog_hold_stop(log_tx=False, silent_error=False):
+        return send_cmd(
+            {"cmd": "teach_jog_hold_stop"},
+            expect_response=False,
+            log_tx=log_tx,
+            silent_error=silent_error,
+        )
 
+    def jog_release(send_stop=False):
+        was_active = jog_state["active"]
         jog_state["active"] = False
         jog_state["direction"] = 0
-        jog_stop_event["evt"].set()
-
         if send_stop and was_active and is_connected:
-            _send_teach_jog(motor_id, 0.0, log_tx=True, silent_error=False)
-
-        _set_jog_status("停止", TEXT_DIM)
+            _send_teach_jog_hold_stop(log_tx=True, silent_error=False)
+        _set_jog_status("Stopped", TEXT_DIM)
         page.update()
 
     def jog_press(direction):
@@ -1024,56 +1082,46 @@ def main(page: ft.Page):
             return
 
         if not is_connected:
-            toast("未连接，无法遥控电机", "#E65100")
+            toast("鏈繛鎺ワ紝鏃犳硶閬ユ帶鐢垫満", "#E65100")
             return
 
         motor_id = _selected_jog_motor_id()
-        speed = _selected_jog_speed()
-        if (jog_state["active"] and
-                jog_state["direction"] == direction and
-                jog_state["motor_id"] == motor_id and
-                abs(jog_state["speed"] - speed) < 1e-6):
-            return
+        step_level = _selected_jog_step_level()
 
-        jog_release(send_stop=True)
+        if jog_state["active"]:
+            jog_release(send_stop=True)
 
         jog_state["active"] = True
         jog_state["motor_id"] = motor_id
         jog_state["direction"] = direction
-        jog_state["speed"] = speed
+        jog_state["step_level"] = step_level
 
-        jog_stop_event["evt"] = threading.Event()
-        stop_evt = jog_stop_event["evt"]
-        target_vel = speed * direction
+        _send_teach_jog_hold_start(motor_id, direction, step_level, log_tx=True, silent_error=False)
 
-        _send_teach_jog(motor_id, target_vel, log_tx=True, silent_error=False)
-
-        dir_text = "正向" if direction > 0 else "反向"
-        _set_jog_status(f"{dir_text}运行 M{motor_id} ({target_vel:+.2f} rad/s)", "#81C784")
+        dir_text = "Forward" if direction > 0 else "Reverse"
+        _set_jog_status(f"{dir_text} Hold M{motor_id} (device repeat)", "#81C784")
         page.update()
-
-        def _repeat_send():
-            while not stop_evt.wait(JOG_PERIOD_S):
-                if not is_connected:
-                    break
-                _send_teach_jog(motor_id, target_vel, log_tx=False, silent_error=True)
-
-        page.run_thread(_repeat_send)
 
     def on_jog_motor_change(e):
         jog_state["motor_id"] = _selected_jog_motor_id()
+        _refresh_jog_step_dropdown()
         if jog_state["active"]:
             jog_release(send_stop=True)
+        else:
+            _set_jog_status("Stopped", TEXT_DIM)
+            page.update()
 
-    def on_jog_speed_change(e):
+    def on_jog_step_change(e):
         if jog_state["active"]:
             jog_press(jog_state["direction"])
         else:
-            _set_jog_status("停止", TEXT_DIM)
+            _set_jog_status("Stopped", TEXT_DIM)
             page.update()
 
+    _refresh_jog_step_dropdown()
+    _set_jog_status("Stopped", TEXT_DIM)
     jog_motor_dd.on_change = on_jog_motor_change
-    jog_speed_dd.on_change = on_jog_speed_change
+    jog_step_dd.on_change = on_jog_step_change
 
     def _jog_hold_button(label, direction, bg_color):
         btn_content = ft.Container(
@@ -1204,9 +1252,9 @@ def main(page: ft.Page):
         border=ft.Border.all(1, "#2A2A3E"),
     )
 
-    angle_min_fields = [ft.TextField(label=f"角度下限{i+1}", value="-90.0", border_color=ACCENT_DIM, focused_border_color=ACCENT, text_size=13, expand=True, on_submit=blur) for i in range(4)]
-    angle_max_fields = [ft.TextField(label=f"角度上限{i+1}", value="90.0", border_color=ACCENT_DIM, focused_border_color=ACCENT, text_size=13, expand=True, on_submit=blur) for i in range(4)]
-    current_limit_fields = [ft.TextField(label=f"电流限制{i+1}", value="2.0", border_color=ACCENT_DIM, focused_border_color=ACCENT, text_size=13, expand=True, on_submit=blur) for i in range(4)]
+    angle_min_fields = [ft.TextField(label=f"角度下限{i+1}", value="-90.0", border_color=ACCENT_DIM, focused_border_color=ACCENT, text_size=13, expand=True, on_submit=blur) for i in range(MOTION_JOINT_COUNT)]
+    angle_max_fields = [ft.TextField(label=f"角度上限{i+1}", value="90.0", border_color=ACCENT_DIM, focused_border_color=ACCENT, text_size=13, expand=True, on_submit=blur) for i in range(MOTION_JOINT_COUNT)]
+    current_limit_fields = [ft.TextField(label=f"电流限制{i+1}", value="2.0", border_color=ACCENT_DIM, focused_border_color=ACCENT, text_size=13, expand=True, on_submit=blur) for i in range(MOTION_JOINT_COUNT)]
     grip_force_max_field = ft.TextField(label="最大抓取力度", value="5.0", border_color=ACCENT_DIM, focused_border_color=ACCENT, text_size=13, expand=True, on_submit=blur)
 
     sys_controls_mobile = [
@@ -1221,14 +1269,14 @@ def main(page: ft.Page):
         ft.Row([wifi_psk], spacing=10),
         ft.Divider(height=1, color="#333"),
         ft.Text("角度限制", size=12, color=ACCENT, weight=ft.FontWeight.W_600),
-        ft.Row(angle_min_fields[:2], spacing=10),
-        ft.Row(angle_min_fields[2:], spacing=10),
-        ft.Row(angle_max_fields[:2], spacing=10),
-        ft.Row(angle_max_fields[2:], spacing=10),
+        ft.Row(angle_min_fields[:3], spacing=10),
+        ft.Row(angle_min_fields[3:], spacing=10),
+        ft.Row(angle_max_fields[:3], spacing=10),
+        ft.Row(angle_max_fields[3:], spacing=10),
         ft.Divider(height=1, color="#333"),
         ft.Text("电流与力度", size=12, color=ACCENT, weight=ft.FontWeight.W_600),
-        ft.Row(current_limit_fields[:2], spacing=10),
-        ft.Row(current_limit_fields[2:], spacing=10),
+        ft.Row(current_limit_fields[:3], spacing=10),
+        ft.Row(current_limit_fields[3:], spacing=10),
         ft.Row([grip_force_max_field], spacing=10),
         ft.Row([_cmd_button("读取配置", ft.Icons.CLOUD_DOWNLOAD, read_sys_click)], spacing=10),
         ft.Row([_cmd_button("保存配置", ft.Icons.SAVE, save_sys_click, bgcolor="#2E7D32")], spacing=10),
@@ -1261,39 +1309,29 @@ def main(page: ft.Page):
         expand=True
     )
 
-    motion_controls_mobile = [
-        ft.Text("运动配置", size=13, weight=ft.FontWeight.W_600, color=TEXT_DIM),
-        ft.Row([_cmd_button("读取运动配置", ft.Icons.SETTINGS_INPUT_COMPOSITE, read_motion_click)], spacing=10),
-        ft.Row([motion_save_btn], spacing=10),
-        ft.Row([motion_group_dd, motion_frame_dd], spacing=10),
-        ft.Row([motion_group_name], spacing=10),
-        ft.Row([frame_m1, frame_m2], spacing=10),
-        ft.Row([frame_m3, frame_m4], spacing=10),
-        ft.Row([frame_dur, frame_act], spacing=10),
-        ft.Row([motion_add_frame_btn, motion_del_frame_btn], spacing=10),
-        ft.Container(
-            content=motion_data_view, expand=True,
-            bgcolor=BG_LOG, border_radius=8, padding=10,
-        ),
-    ]
-
-    motion_controls_desktop = [
+    motion_controls = [
         ft.Text("运动配置", size=13, weight=ft.FontWeight.W_600, color=TEXT_DIM),
         ft.Row([
             _cmd_button("读取运动配置", ft.Icons.SETTINGS_INPUT_COMPOSITE, read_motion_click),
             motion_save_btn,
         ], spacing=10),
-        ft.Row([motion_group_dd, motion_frame_dd, motion_group_name], spacing=10),
-        ft.Row([frame_m1, frame_m2, frame_m3, frame_m4], spacing=10),
-        ft.Row([frame_dur, frame_act, motion_add_frame_btn, motion_del_frame_btn], spacing=10, wrap=True),
+        ft.Row([motion_group_dd, motion_frame_dd], spacing=10),
+        ft.Row([motion_group_name], spacing=10),
+        ft.Row([frame_m1, frame_m2, frame_m3], spacing=10),
+        ft.Row([frame_m4, frame_m5], spacing=10),
+        ft.Row([frame_dur, frame_act], spacing=10),
+        ft.Row([motion_add_frame_btn, motion_del_frame_btn], spacing=10),
         ft.Container(
-            content=motion_data_view, expand=True,
-            bgcolor=BG_LOG, border_radius=8, padding=10,
+            content=motion_data_view,
+            height=motion_view_height,
+            bgcolor=BG_LOG,
+            border_radius=8,
+            padding=10,
         ),
     ]
 
     motion_card = ft.Container(
-        content=ft.Column(motion_controls_mobile if is_mobile else motion_controls_desktop, spacing=10, expand=True),
+        content=ft.ListView(expand=True, spacing=10, controls=motion_controls),
         bgcolor=BG_CARD, border_radius=12, padding=16, expand=True,
         border=ft.Border.all(1, "#2A2A3E"),
     )
@@ -1301,22 +1339,22 @@ def main(page: ft.Page):
     jog_controls_mobile = [
         ft.Text("电机遥控", size=13, weight=ft.FontWeight.W_600, color=TEXT_DIM),
         ft.Row([jog_motor_dd], spacing=10),
-        ft.Row([jog_speed_dd], spacing=10),
+        ft.Row([jog_step_dd], spacing=10),
         ft.Row([jog_status_text], spacing=10),
         ft.Row([jog_forward_wrap], spacing=10),
         ft.Row([jog_reverse_wrap], spacing=10),
-        ft.Text("按住按钮持续转动，松开立即停止；速度由上方下拉框设置。", size=11, color=TEXT_DIM),
+        ft.Text("点按走一步，按住连续步进；步长或档位由上方下拉框设置。", size=11, color=TEXT_DIM),
     ]
 
     jog_controls_desktop = [
         ft.Text("电机遥控", size=13, weight=ft.FontWeight.W_600, color=TEXT_DIM),
         ft.Row([
             jog_motor_dd,
-            jog_speed_dd,
+            jog_step_dd,
             ft.Container(content=jog_status_text, expand=True),
         ], spacing=10),
         ft.Row([jog_forward_wrap, jog_reverse_wrap], spacing=10),
-        ft.Text("按住按钮持续转动，松开立即停止；速度由上方下拉框设置。", size=11, color=TEXT_DIM),
+        ft.Text("点按走一步，按住连续步进；步长或档位由上方下拉框设置。", size=11, color=TEXT_DIM),
     ]
 
     jog_card = ft.Container(

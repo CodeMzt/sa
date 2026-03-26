@@ -94,6 +94,8 @@
       <configSetting altId="p105.gpio_mode.gpio_mode_out.high" configurationId="p105.gpio_mode"/>
       <configSetting altId="p108.gpio_mode.gpio_mode_peripheral" configurationId="p108.gpio_mode"/>
       <configSetting altId="p114.gpio_mode.gpio_mode_peripheral" configurationId="p114.gpio_mode"/>
+      <configSetting altId="p202.gpio_mode.gpio_mode_peripheral" configurationId="p202.gpio_mode"/>
+      <configSetting altId="p203.gpio_mode.gpio_mode_peripheral" configurationId="p203.gpio_mode"/>
       <configSetting altId="p204.gpio_mode.gpio_mode_peripheral" configurationId="p204.gpio_mode"/>
       <configSetting altId="p205.gpio_mode.gpio_mode_peripheral" configurationId="p205.gpio_mode"/>
       <configSetting altId="p211.gpio_mode.gpio_mode_peripheral" configurationId="p211.gpio_mode"/>
@@ -105,6 +107,8 @@
       <configSetting altId="p308.gpio_mode.gpio_mode_peripheral" configurationId="p308.gpio_mode"/>
       <configSetting altId="p309.gpio_mode.gpio_mode_peripheral" configurationId="p309.gpio_mode"/>
       <configSetting altId="p310.gpio_mode.gpio_mode_peripheral" configurationId="p310.gpio_mode"/>
+      <configSetting altId="p315.gpio_mode.gpio_mode_peripheral" configurationId="p315.gpio_mode"/>
+      <configSetting altId="p315.gpio_otype.gpio_otype_n_ch_od" configurationId="p315.gpio_otype"/>
       <configSetting altId="p401.gpio_mode.gpio_mode_peripheral" configurationId="p401.gpio_mode"/>
       <configSetting altId="p402.gpio_mode.gpio_mode_peripheral" configurationId="p402.gpio_mode"/>
       <configSetting altId="p403.output.high" configurationId="p403"/>
@@ -132,16 +136,22 @@
       <configSetting altId="p703.gpio_mode.gpio_mode_peripheral" configurationId="p703.gpio_mode"/>
       <configSetting altId="p704.gpio_mode.gpio_mode_peripheral" configurationId="p704.gpio_mode"/>
       <configSetting altId="p705.gpio_mode.gpio_mode_peripheral" configurationId="p705.gpio_mode"/>
+      <configSetting altId="p900.gpio_mode.gpio_mode_peripheral" configurationId="p900.gpio_mode"/>
+      <configSetting altId="p900.gpio_otype.gpio_otype_n_ch_od" configurationId="p900.gpio_otype"/>
       <configSetting altId="qspi0.qio0.p307" configurationId="qspi0.qio0" isUsedByDriver="true" peripheral="QSPI0"/>
       <configSetting altId="qspi0.qio1.p308" configurationId="qspi0.qio1" isUsedByDriver="true" peripheral="QSPI0"/>
       <configSetting altId="qspi0.qio2.p309" configurationId="qspi0.qio2" isUsedByDriver="true" peripheral="QSPI0"/>
       <configSetting altId="qspi0.qio3.p310" configurationId="qspi0.qio3" isUsedByDriver="true" peripheral="QSPI0"/>
       <configSetting altId="qspi0.qspclk.p305" configurationId="qspi0.qspclk" isUsedByDriver="true" peripheral="QSPI0"/>
       <configSetting altId="qspi0.qssl.p306" configurationId="qspi0.qssl" isUsedByDriver="true" peripheral="QSPI0"/>
+      <configSetting altId="sci4.scl.p315" configurationId="sci4.scl" isUsedByDriver="true" peripheral="SCI4"/>
+      <configSetting altId="sci4.sda.p900" configurationId="sci4.sda" isUsedByDriver="true" peripheral="SCI4"/>
       <configSetting altId="sci6.rxd.p505" configurationId="sci6.rxd" isUsedByDriver="true" peripheral="SCI6"/>
       <configSetting altId="sci6.txd.p506" configurationId="sci6.txd" isUsedByDriver="true" peripheral="SCI6"/>
       <configSetting altId="sci7.rxd.p614" configurationId="sci7.rxd" isUsedByDriver="true" peripheral="SCI7"/>
       <configSetting altId="sci7.txd.p613" configurationId="sci7.txd" isUsedByDriver="true" peripheral="SCI7"/>
+      <configSetting altId="sci9.rxd.p202" configurationId="sci9.rxd" isUsedByDriver="true" peripheral="SCI9"/>
+      <configSetting altId="sci9.txd.p203" configurationId="sci9.txd" isUsedByDriver="true" peripheral="SCI9"/>
       <configSetting altId="spi1.miso.p100" configurationId="spi1.miso" isUsedByDriver="true" peripheral="SPI1"/>
       <configSetting altId="spi1.mosi.p101" configurationId="spi1.mosi" isUsedByDriver="true" peripheral="SPI1"/>
       <configSetting altId="spi1.rspck.p102" configurationId="spi1.rspck" isUsedByDriver="true" peripheral="SPI1"/>

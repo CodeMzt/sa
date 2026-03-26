@@ -83,12 +83,12 @@ extern "C" {
             (((RA_NOT_DEFINED > 0) ? 0U : 1U) << 16) /* OSPI */ | \
             (((1 > 0) ? 0U : 1U) << 18) /* SPI1 */ | \
             (((RA_NOT_DEFINED > 0) ? 0U : 1U) << 19) /* SPI0 */ | \
-            (((RA_NOT_DEFINED > 0) ? 0U : 1U) << 22) /* SCI9 */ | \
+            (((1 > 0) ? 0U : 1U) << 22) /* SCI9 */ | \
             (((RA_NOT_DEFINED > 0) ? 0U : 1U) << 23) /* SCI8 */ | \
             (((1 > 0) ? 0U : 1U) << 24) /* SCI7 */ | \
             (((1 > 0) ? 0U : 1U) << 25) /* SCI6 */ | \
             (((RA_NOT_DEFINED > 0) ? 0U : 1U) << 26) /* SCI5 */ | \
-            (((RA_NOT_DEFINED > 0) ? 0U : 1U) << 27) /* SCI4 */ | \
+            (((1 > 0) ? 0U : 1U) << 27) /* SCI4 */ | \
             (((RA_NOT_DEFINED > 0) ? 0U : 1U) << 28) /* SCI3 */ | \
             (((RA_NOT_DEFINED > 0) ? 0U : 1U) << 29) /* SCI2 */ | \
             (((RA_NOT_DEFINED > 0) ? 0U : 1U) << 30) /* SCI1 */ | \
@@ -144,7 +144,7 @@ extern "C" {
 #ifndef BSP_TZ_CFG_MSSAR
 #define BSP_TZ_CFG_MSSAR (\
             (((RA_NOT_DEFINED > 0) ? 0U : 1U) << 0) /* ELC */ | \
-            (((6 > 0) ? 0U : 1U) << 1) /* DTC_DMAC */ | \
+            (((7 > 0) ? 0U : 1U) << 1) /* DTC_DMAC */ | \
             0xfffffffc) /* Unused */
 #endif
 
@@ -252,7 +252,7 @@ extern "C" {
 #endif
 
 /* Set DTCSTSAR if the Secure program uses the DTC. */
-#if 5 == RA_NOT_DEFINED
+#if 6 == RA_NOT_DEFINED
  #define BSP_TZ_CFG_DTC_USED (0U)
 #else
 #define BSP_TZ_CFG_DTC_USED (1U)

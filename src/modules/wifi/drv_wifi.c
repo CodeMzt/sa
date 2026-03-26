@@ -37,8 +37,7 @@
 #define WIFI_AP_GW3       1U
 
 /* teach_jog 速度范围：0.05~0.50 rad/s（centi-rad/s: 5~50） */
-#define TEACH_JOG_ABS_VEL_MIN_CENTI 5
-#define TEACH_JOG_ABS_VEL_MAX_CENTI 50
+#define TEACH_JOG_STEP_LEVEL_MAX    2U
 
 /* ---- 静态缓冲 ---- */
 static volatile char     rx_buf[RX_BUF_SIZE];
@@ -50,6 +49,8 @@ static volatile bool     tx_done = true;
 
 static char  tx_buf[TX_BUF_SIZE];
 static char  line[RX_BUF_SIZE];             /**< static 避免爆栈 */
+static char  cmd_stream_buf[RX_BUF_SIZE];
+static size_t cmd_stream_len = 0U;
 static int   active_sock = -1;
 static bool  wifi_active = false;
 
@@ -58,12 +59,14 @@ static bool        send_at(const char *cmd, const char *expect, uint32_t ms);
 static void        clear_rx(void);
 static void        wait_tx(uint32_t ms);
 static void        handle_json(const char *js);
+static void        dispatch_json_stream(const char *chunk, size_t chunk_len);
 static void        send_json(const char *json_str);
 static void        send_error(const char *cmd, const char *msg);
 static bool        match_cmd(const char *js, const char *cmd);
 static const char* parse_str(const char *js, const char *key, char *out, size_t max);
 static bool        parse_ip(const char *js, const char *key, uint8_t ip[4]);
 static bool        parse_uint(const char *js, const char *key, uint32_t *val);
+static bool        parse_int(const char *js, const char *key, int32_t *val);
 static bool        parse_decimal_i16(const char *js, const char *key, int16_t *val);
 static bool        parse_decimal_u16(const char *js, const char *key, uint16_t *val);
 static bool        parse_decimal_i16_array(const char *js, const char *key, int16_t *arr, size_t n);
@@ -156,6 +159,8 @@ bool wifi_start_service(void) {
     R_BSP_IrqEnable(g_uart_wifi_cfg.eri_irq);
 
     wifi_reset_debug_session();
+    cmd_stream_len = 0U;
+    cmd_stream_buf[0] = '\0';
     wifi_active = true;
     return true;
 }
@@ -180,6 +185,8 @@ bool wifi_stop_service(void) {
     rx_idx = 0;
     rx_buf[0] = '\0';
     rx_state = 0;
+    cmd_stream_len = 0U;
+    cmd_stream_buf[0] = '\0';
     active_sock = -1;
     wifi_active = false;
     return ok;
@@ -201,6 +208,8 @@ void wifi_reset_debug_session(void) {
     rx_idx = 0;
     rx_buf[0] = '\0';
     rx_state = 0;
+    cmd_stream_len = 0U;
+    cmd_stream_buf[0] = '\0';
     active_sock = -1;
     R_BSP_IrqEnable(g_uart_wifi_cfg.rxi_irq);
 }
@@ -266,6 +275,8 @@ uint8_t wifi_init_ap_server(void) {
 void wifi_process_commands(void) {
     if (rx_state != 2) return;
 
+    size_t frame_len = 0U;
+
     /* peek：SKTRPT 需要等数据到齐 */
     const char *buf = (const char *)rx_buf;
     if (strncmp(buf, "+SKTRPT=", 8) == 0) {
@@ -290,36 +301,106 @@ void wifi_process_commands(void) {
         }
         /* 帧完整，重置计时 */
         pending_frame_start_tick = 0;
+        frame_len = expected;
+        if ((rx_idx >= (frame_len + 2U)) &&
+            (rx_buf[frame_len] == '\r') &&
+            (rx_buf[frame_len + 1U] == '\n')) {
+            frame_len += 2U;
+        }
+    } else {
+        frame_len = (size_t) rx_idx;
     }
 
     /* 消费 buffer */
     R_BSP_IrqDisable(g_uart_wifi_cfg.rxi_irq);
-    strncpy(line, (const char *)rx_buf, RX_BUF_SIZE - 1);
-    line[RX_BUF_SIZE - 1] = '\0';
-    rx_state = 0; rx_idx = 0; rx_buf[0] = '\0';
+    if (frame_len >= RX_BUF_SIZE) {
+        frame_len = RX_BUF_SIZE - 1U;
+    }
+    memcpy(line, (const char *) rx_buf, frame_len);
+    line[frame_len] = '\0';
+    if (rx_idx > frame_len) {
+        uint16_t remaining = (uint16_t) (rx_idx - frame_len);
+        memmove((void *) rx_buf, (const void *) (rx_buf + frame_len), remaining);
+        rx_idx = remaining;
+        rx_buf[rx_idx] = '\0';
+        rx_state = ((rx_idx >= 2U) &&
+                    (rx_buf[rx_idx - 2U] == '\r') &&
+                    (rx_buf[rx_idx - 1U] == '\n')) ? 2U : 0U;
+    } else {
+        rx_state = 0; rx_idx = 0; rx_buf[0] = '\0';
+    }
     R_BSP_IrqEnable(g_uart_wifi_cfg.rxi_irq);
 
-    /* 去除尾部 CRLF */
     size_t len = strlen(line);
-    while (len && (line[len - 1] == '\r' || line[len - 1] == '\n')) line[--len] = '\0';
     if (!len) return;
 
     LOG_D("[RX] len=%d", (int)len);
 
-    /* 提取 SKTRPT → JSON */
+    /* 提取 SKTRPT → JSON stream */
     if (strncmp(line, "+SKTRPT=", 8) == 0) {
+        int dlen = 0;
         sscanf(line + 8, "%d", &active_sock);
+        sscanf(line + 8, "%*d,%d", &dlen);
         char *sep = strstr(line, "\r\n\r\n");
         if (sep) {
-            char *js = sep + 4;
-            size_t jlen = strlen(js);
-            while (jlen && (js[jlen - 1] == '\r' || js[jlen - 1] == '\n')) js[--jlen] = '\0';
-            if (jlen) { handle_json(js); return; }
+            char *payload = sep + 4;
+            size_t payload_len = strlen(payload);
+            if ((dlen > 0) && (payload_len > (size_t) dlen)) {
+                payload_len = (size_t) dlen;
+            }
+            if (payload_len) {
+                dispatch_json_stream(payload, payload_len);
+                return;
+            }
         }
         LOG_W("SKTRPT: no JSON body");
         return;
     }
+
+    while (len && (line[len - 1] == '\r' || line[len - 1] == '\n')) line[--len] = '\0';
     LOG_D("[RX] ignored: %.60s", line);
+}
+
+static void dispatch_json_stream(const char *chunk, size_t chunk_len) {
+    if ((chunk == NULL) || (chunk_len == 0U)) {
+        return;
+    }
+
+    if (chunk_len >= RX_BUF_SIZE) {
+        LOG_W("JSON stream chunk too large: %u", (unsigned int) chunk_len);
+        cmd_stream_len = 0U;
+        return;
+    }
+
+    if ((cmd_stream_len + chunk_len) >= RX_BUF_SIZE) {
+        LOG_W("JSON stream overflow, clearing stale buffer");
+        cmd_stream_len = 0U;
+    }
+
+    memcpy(cmd_stream_buf + cmd_stream_len, chunk, chunk_len);
+    cmd_stream_len += chunk_len;
+    cmd_stream_buf[cmd_stream_len] = '\0';
+
+    while (cmd_stream_len > 0U) {
+        char *line_end = strstr(cmd_stream_buf, "\r\n");
+        if (line_end == NULL) {
+            break;
+        }
+
+        size_t msg_len = (size_t) (line_end - cmd_stream_buf);
+        if (msg_len > 0U) {
+            cmd_stream_buf[msg_len] = '\0';
+            handle_json(cmd_stream_buf);
+        }
+
+        size_t consume_len = msg_len + 2U;
+        size_t remaining = cmd_stream_len - consume_len;
+        if (remaining > 0U) {
+            memmove(cmd_stream_buf, cmd_stream_buf + consume_len, remaining);
+        }
+        cmd_stream_len = remaining;
+        cmd_stream_buf[cmd_stream_len] = '\0';
+    }
 }
 
 /* ===========================================================
@@ -360,9 +441,9 @@ static void handle_json(const char *js) {
             "\"gateway\":\"%u.%u.%u.%u\",\"server_ip\":\"%u.%u.%u.%u\","
             "\"server_port\":%u,\"debug_port\":%u,"
             "\"wifi_ssid\":\"%s\",\"wifi_psk\":\"%s\",\"log_offset\":%lu,"
-            "\"angle_min\":[%d.%02d,%d.%02d,%d.%02d,%d.%02d],"
-            "\"angle_max\":[%d.%02d,%d.%02d,%d.%02d,%d.%02d],"
-            "\"current_limit\":[%u.%02u,%u.%02u,%u.%02u,%u.%02u],"
+            "\"angle_min\":[%d.%02d,%d.%02d,%d.%02d,%d.%02d,%d.%02d],"
+            "\"angle_max\":[%d.%02d,%d.%02d,%d.%02d,%d.%02d,%d.%02d],"
+            "\"current_limit\":[%u.%02u,%u.%02u,%u.%02u,%u.%02u,%u.%02u],"
             "\"grip_force_max\":%u.%02u}"
             ,
             c->ip_addr[0],  c->ip_addr[1],  c->ip_addr[2],  c->ip_addr[3],
@@ -375,14 +456,17 @@ static void handle_json(const char *js) {
             c->angle_min[1]/100, (c->angle_min[1] < 0 ? -c->angle_min[1] : c->angle_min[1]) % 100,
             c->angle_min[2]/100, (c->angle_min[2] < 0 ? -c->angle_min[2] : c->angle_min[2]) % 100,
             c->angle_min[3]/100, (c->angle_min[3] < 0 ? -c->angle_min[3] : c->angle_min[3]) % 100,
+            c->angle_min[4]/100, (c->angle_min[4] < 0 ? -c->angle_min[4] : c->angle_min[4]) % 100,
             c->angle_max[0]/100, c->angle_max[0] % 100,
             c->angle_max[1]/100, c->angle_max[1] % 100,
             c->angle_max[2]/100, c->angle_max[2] % 100,
             c->angle_max[3]/100, c->angle_max[3] % 100,
+            c->angle_max[4]/100, c->angle_max[4] % 100,
             c->current_limit[0]/100, c->current_limit[0] % 100,
             c->current_limit[1]/100, c->current_limit[1] % 100,
             c->current_limit[2]/100, c->current_limit[2] % 100,
             c->current_limit[3]/100, c->current_limit[3] % 100,
+            c->current_limit[4]/100, c->current_limit[4] % 100,
             c->grip_force_max/100, c->grip_force_max % 100);
         send_json(tx_buf);
         return;
@@ -399,9 +483,9 @@ static void handle_json(const char *js) {
         ok &= parse_uint(js, "debug_port",  &v); cfg.debug_port  = (uint16_t)v;
         ok &= parse_str(js, "wifi_ssid", cfg.wifi_ssid, sizeof(cfg.wifi_ssid)) != NULL;
         ok &= parse_str(js, "wifi_psk",  cfg.wifi_psk,  sizeof(cfg.wifi_psk))  != NULL;
-        ok &= parse_decimal_i16_array(js, "angle_min", cfg.angle_min, 4);
-        ok &= parse_decimal_i16_array(js, "angle_max", cfg.angle_max, 4);
-        ok &= parse_decimal_u16_array(js, "current_limit", cfg.current_limit, 4);
+        ok &= parse_decimal_i16_array(js, "angle_min", cfg.angle_min, MOTION_JOINT_COUNT);
+        ok &= parse_decimal_i16_array(js, "angle_max", cfg.angle_max, MOTION_JOINT_COUNT);
+        ok &= parse_decimal_u16_array(js, "current_limit", cfg.current_limit, MOTION_JOINT_COUNT);
         ok &= parse_decimal_u16(js, "grip_force_max", &cfg.grip_force_max);
         if (!ok) { send_error("write_sys_cfg", "invalid_fields"); return; }
         send_json(nvm_save_sys_config(&cfg) == FSP_SUCCESS
@@ -461,11 +545,9 @@ static void handle_json(const char *js) {
             return;
         }
 
-        for (uint32_t i = 0; i < TOTAL_ACTION_GROUPS; i++) {
-            if (cfg.groups[i].frame_count > MAX_FRAMES_PER_SEQ) {
-                send_error("write_motion_cfg", "invalid_frame_count");
-                return;
-            }
+        if (!nvm_is_motion_config_valid(&cfg)) {
+            send_error("write_motion_cfg", "invalid_motion_cfg");
+            return;
         }
 
         send_json(nvm_save_motion_config(&cfg) == FSP_SUCCESS
@@ -474,37 +556,48 @@ static void handle_json(const char *js) {
         return;
     }
 
-    if (match_cmd(js, "teach_jog")) {
+    if (match_cmd(js, "teach_jog_hold_start")) {
         uint32_t motor_id_u32 = 0U;
-        int16_t vel_centi = 0;
+        uint32_t step_level_u32 = 0U;
+        int32_t direction_raw = 0;
+        int8_t direction = 0;
 
         if (!parse_uint(js, "motor_id", &motor_id_u32)) {
-            send_error("teach_jog", "missing_motor_id");
+            send_error("teach_jog_hold_start", "missing_motor_id");
             return;
         }
-        if (!parse_decimal_i16(js, "vel", &vel_centi)) {
-            send_error("teach_jog", "missing_vel");
+        if (!parse_int(js, "dir", &direction_raw)) {
+            send_error("teach_jog_hold_start", "missing_dir");
+            return;
+        }
+        if (!parse_uint(js, "step_level", &step_level_u32)) {
+            send_error("teach_jog_hold_start", "missing_step_level");
             return;
         }
 
         if (motor_id_u32 < ROBSTRIDE_MOTOR_ID_JOINT1 || motor_id_u32 > ROBSTRIDE_MOTOR_ID_GRIPPER) {
-            send_error("teach_jog", "invalid_motor_id");
+            send_error("teach_jog_hold_start", "invalid_motor_id");
+            return;
+        }
+        if ((direction_raw != -1) && (direction_raw != 1)) {
+            send_error("teach_jog_hold_start", "invalid_dir");
+            return;
+        }
+        direction = (int8_t) direction_raw;
+        if (step_level_u32 > TEACH_JOG_STEP_LEVEL_MAX) {
+            send_error("teach_jog_hold_start", "invalid_step_level");
             return;
         }
 
-        if (vel_centi != 0) {
-            int32_t abs_vel_centi = (vel_centi < 0) ? (-(int32_t)vel_centi) : (int32_t)vel_centi;
-            if (abs_vel_centi < TEACH_JOG_ABS_VEL_MIN_CENTI ||
-                abs_vel_centi > TEACH_JOG_ABS_VEL_MAX_CENTI) {
-                send_error("teach_jog", "invalid_vel");
-                return;
-            }
-        }
+        teach_jog_hold_set((uint8_t) motor_id_u32,
+                           direction,
+                           (uint8_t) step_level_u32,
+                           (uint32_t) xTaskGetTickCount());
+        return;
+    }
 
-        g_teach_jog_cmd.motor_id = (uint8_t)motor_id_u32;
-        g_teach_jog_cmd.vel_centi_rad_s = vel_centi;
-        g_teach_jog_cmd.last_update_tick = (uint32_t)xTaskGetTickCount();
-        g_teach_jog_cmd.active = (vel_centi != 0);
+    if (match_cmd(js, "teach_jog_hold_stop")) {
+        teach_jog_hold_clear();
         return;
     }
 
@@ -669,6 +762,37 @@ static bool parse_uint(const char *js, const char *key, uint32_t *val) {
         p++;
     }
     *val = v;
+    return true;
+}
+
+static bool parse_int(const char *js, const char *key, int32_t *val) {
+    if (!js || !key || !val) return false;
+    char pat[32];
+    snprintf(pat, sizeof(pat), "\"%s\":", key);
+    const char *p = strstr(js, pat);
+    if (!p) return false;
+    p += strlen(pat);
+    while (*p == ' ') p++;
+    if (*p == '"') p++;
+    if (*p == '\0') return false;
+
+    int sign = 1;
+    if (*p == '-') {
+        sign = -1;
+        p++;
+    } else if (*p == '+') {
+        p++;
+    }
+
+    if (!(*p >= '0' && *p <= '9')) return false;
+
+    int32_t v = 0;
+    while (*p >= '0' && *p <= '9') {
+        v = v * 10 + (int32_t)(*p - '0');
+        p++;
+    }
+
+    *val = sign * v;
     return true;
 }
 

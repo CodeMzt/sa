@@ -22,7 +22,7 @@
 
 /* ---- 校验与版本 ---- */
 #define NVM_MAGIC_WORD      0x52415F4D           /**< "RA_M" */
-#define NVM_VERSION         0x00010000           /**< v1.0.0 */
+#define NVM_VERSION         0x00020000           /**< v2.0.0 */
 
 /* ---- 缓冲 ---- */
 #define NVM_LOG_CACHE_SIZE  4096                 /**< 日志缓存*/

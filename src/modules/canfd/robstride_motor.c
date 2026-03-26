@@ -8,19 +8,30 @@
 #include "robstride_motor.h"
 #include "drv_canfd.h"
 
+/* -------------------------------------------------------------------------- */
+/* 旧模块说明                                                                  */
+/*                                                                            */
+/* 本文件实现的是旧版 RobStride CAN 控制函数。当前串口舵机重构后，运行时已经不   */
+/* 再通过这些函数下发电机命令；但 `g_motors` 全局镜像、ID 与边界工具函数仍继续   */
+/* 被新链路复用，因此文件整体暂时保留。                                         */
+/* -------------------------------------------------------------------------- */
+
 /* ============================================================
  *  全局电机数组
  *  索引 0~3 对应关节1~4，索引 4 对应夹爪
  * ============================================================ */
+/* 当前全局镜像仍保留 1/2/3/4/5/6 六个槽位，其中 ID5 仅为兼容保留，不参与新的串口运控链。 */
 robstride_motor_t g_motors[ROBSTRIDE_MOTOR_NUM] = {
     { .can_id = ROBSTRIDE_MOTOR_ID_JOINT1,  .feedback = {0} },
     { .can_id = ROBSTRIDE_MOTOR_ID_JOINT2,  .feedback = {0} },
     { .can_id = ROBSTRIDE_MOTOR_ID_JOINT3,  .feedback = {0} },
     { .can_id = ROBSTRIDE_MOTOR_ID_JOINT4,  .feedback = {0} },
+    { .can_id = ROBSTRIDE_MOTOR_ID_JOINT5,  .feedback = {0} },
     { .can_id = ROBSTRIDE_MOTOR_ID_GRIPPER, .feedback = {0} },
 };
 
 const float g_motor_gear_ratio[ROBSTRIDE_MOTOR_NUM] = {
+    ROBSTRIDE_GEAR_RATIO_JOINT_DEFAULT,
     ROBSTRIDE_GEAR_RATIO_JOINT_DEFAULT,
     ROBSTRIDE_GEAR_RATIO_JOINT_DEFAULT,
     ROBSTRIDE_GEAR_RATIO_JOINT_DEFAULT,
@@ -93,7 +104,7 @@ bool is_motor_id_valid(uint8_t motor_id) {
 }
 
 bool is_joint_motor_id(uint8_t motor_id) {
-    return (motor_id >= ROBSTRIDE_MOTOR_ID_JOINT1) && (motor_id <= ROBSTRIDE_MOTOR_ID_JOINT4);
+    return (motor_id >= ROBSTRIDE_MOTOR_ID_JOINT1) && (motor_id <= ROBSTRIDE_MOTOR_ID_JOINT5);
 }
 
 float clamp_position_cmd(uint8_t motor_id, float position_cmd) {

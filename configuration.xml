@@ -316,6 +316,10 @@
       <description>Serial Sound Interface</description>
       <originalPack>Renesas.RA.6.3.0.pack</originalPack>
     </component>
+    <component apiversion="" class="HAL Drivers" condition="" group="all" subgroup="r_sci_i2c" variant="" vendor="Renesas" version="6.3.0">
+      <description>SCI I2C Master Interface</description>
+      <originalPack>Renesas.RA.6.3.0.pack</originalPack>
+    </component>
   </raComponentSelection>
   <raElcConfiguration/>
   <raIcuConfiguration/>
@@ -695,6 +699,62 @@
       <property id="module.driver.timer.gtiocb_disable_setting" value="module.driver.timer.gtiocb_disable_setting.gtioc_disable_prohibited"/>
     </module>
     <module id="module.freertos.heap.4.1043172701"/>
+    <module id="module.driver.uart_on_sci_uart.141074645">
+      <property id="module.driver.uart.name" value="g_uart_servo"/>
+      <property id="module.driver.uart.channel" value="9"/>
+      <property id="module.driver.uart.data_bits" value="module.driver.uart.data_bits.data_bits_8"/>
+      <property id="module.driver.uart.parity" value="module.driver.uart.parity.parity_off"/>
+      <property id="module.driver.uart.stop_bits" value="module.driver.uart.stop_bits.stop_bits_1"/>
+      <property id="module.driver.uart.baud" value="115200"/>
+      <property id="module.driver.uart.baudrate_modulation" value="module.driver.uart.baudrate_modulation.disabled"/>
+      <property id="module.driver.uart.baudrate_max_err" value="5"/>
+      <property id="module.driver.uart.flow_control" value="module.driver.uart.flow_control.rts"/>
+      <property id="module.driver.uart.pin_control_port" value="module.driver.uart.pin_control_port.PORT_DISABLE"/>
+      <property id="module.driver.uart.pin_control_pin" value="module.driver.uart.pin_control_pin.PIN_DISABLE"/>
+      <property id="module.driver.uart.clk_src" value="module.driver.uart.clk_src.int_clk"/>
+      <property id="module.driver.uart.rx_edge_start" value="module.driver.uart.rx_edge_start.falling_edge"/>
+      <property id="module.driver.uart.noisecancel_en" value="module.driver.uart.noisecancel_en.disabled"/>
+      <property id="module.driver.uart.rx_fifo_trigger" value="module.driver.uart.rx_fifo_trigger.max"/>
+      <property id="module.driver.uart.irda.ire" value="module.driver.uart.irda.ire.disabled"/>
+      <property id="module.driver.uart.irda.irrxinv" value="module.driver.uart.irda.irrxinv.disabled"/>
+      <property id="module.driver.uart.irda.irtxinv" value="module.driver.uart.irda.irtxinv.disabled"/>
+      <property id="module.driver.uart.rs485.de_enable" value="module.driver.uart.rs485.de_enable.disabled"/>
+      <property id="module.driver.uart.rs485.de_polarity" value="module.driver.uart.rs485.de_polarity.high"/>
+      <property id="module.driver.uart.rs485.de_port_number" value="module.driver.uart.rs485.de_port_number.PORT_DISABLE"/>
+      <property id="module.driver.uart.rs485.de_pin_number" value="module.driver.uart.rs485.de_pin_number.PIN_DISABLE"/>
+      <property id="module.driver.uart.callback" value="uart_servo_callback"/>
+      <property id="module.driver.uart.rxi_ipl" value="board.icu.common.irq.priority10"/>
+      <property id="module.driver.uart.txi_ipl" value="board.icu.common.irq.priority10"/>
+      <property id="module.driver.uart.tei_ipl" value="board.icu.common.irq.priority12"/>
+      <property id="module.driver.uart.eri_ipl" value="board.icu.common.irq.priority12"/>
+    </module>
+    <module id="module.driver.transfer_on_dtc.1771104221">
+      <property id="module.driver.transfer.name" value="g_transfer5"/>
+      <property id="module.driver.transfer.mode" value="module.driver.transfer.mode.mode_normal"/>
+      <property id="module.driver.transfer.size" value="module.driver.transfer.size.size_2_byte"/>
+      <property id="module.driver.transfer.dest_addr_mode" value="module.driver.transfer.dest_addr_mode.addr_mode_fixed"/>
+      <property id="module.driver.transfer.src_addr_mode" value="module.driver.transfer.src_addr_mode.addr_mode_fixed"/>
+      <property id="module.driver.transfer.repeat_area" value="module.driver.transfer.repeat_area.repeat_area_source"/>
+      <property id="module.driver.transfer.interrupt" value="module.driver.transfer.interrupt.interrupt_end"/>
+      <property id="module.driver.transfer.length" value="0"/>
+      <property id="module.driver.transfer.num_blocks" value="0"/>
+      <property id="module.driver.transfer.number_of_descriptors" value="1"/>
+      <property id="module.driver.transfer.activation_source" value="_disabled"/>
+    </module>
+    <module id="module.driver.i2c_on_sci_i2c.1028492821">
+      <property id="module.driver.i2c.name" value="g_i2c_touch"/>
+      <property id="module.driver.i2c.channel" value="4"/>
+      <property id="module.driver.i2c.slave" value="0x0A"/>
+      <property id="module.driver.i2c.addr_mode" value="module.driver.i2c.addr_mode.addr_mode_7bit"/>
+      <property id="module.driver.i2c.rate" value="module.driver.i2c.rate.rate_standard"/>
+      <property id="module.driver.i2c.rate_value" value="0"/>
+      <property id="module.driver.i2c.sda_delay" value="300"/>
+      <property id="module.driver.i2c.snfr" value="module.driver.i2c.snfr.div_one"/>
+      <property id="module.driver.i2c.bitrate_modulation" value="module.driver.i2c.bitrate_modulation.true"/>
+      <property id="module.driver.i2c.p_callback" value="sci_i2c4_master_callback"/>
+      <property id="module.driver.i2c.ipl" value="board.icu.common.irq.priority12"/>
+      <property id="module.driver.i2c.rx_ipl" value="_disabled"/>
+    </module>
     <object id="rtos.awsfreertos.object.queue.913415362">
       <property id="rtos.awsfreertos.object.queue.symbol" value="g_log_queue"/>
       <property id="rtos.awsfreertos.object.queue.item_size" value="128"/>
@@ -807,6 +867,19 @@
         <stack module="module.driver.transfer_on_dtc.501894087" requires="module.driver.i2s_on_ssi.requires.transfer_rx"/>
       </stack>
       <stack module="module.driver.timer_on_gpt.1192167985"/>
+    </context>
+    <context id="rtos.awsfreertos.thread.803077988">
+      <property id="_symbol" value="servo_bus"/>
+      <property id="rtos.awsfreertos.thread.name" value="servo_bus"/>
+      <property id="rtos.awsfreertos.thread.stack" value="0x800"/>
+      <property id="rtos.awsfreertos.thread.priority" value="3"/>
+      <property id="rtos.awsfreertos.thread.context" value="NULL"/>
+      <property id="rtos.awsfreertos.thread.allocation" value="rtos.awsfreertos.thread.allocation.static"/>
+      <property id="rtos.awsfreertos.thread.secure_context" value="rtos.awsfreertos.thread.secure_context.enable"/>
+      <stack module="module.driver.uart_on_sci_uart.141074645">
+        <stack module="module.driver.transfer_on_dtc.1771104221" requires="module.driver.uart_on_sci_uart.requires.transfer_tx"/>
+      </stack>
+      <stack module="module.driver.i2c_on_sci_i2c.1028492821"/>
     </context>
     <config id="config.driver.ether">
       <property id="config.driver.ether.param_checking_enable" value="config.driver.ether.param_checking_enable.bsp"/>
@@ -982,6 +1055,11 @@
       <property id="config.driver.ioport.checking" value="config.driver.ioport.checking.system"/>
       <property id="config.driver.ioport.ccd_support_enable" value="config.driver.ioport.ccd_support_enable.disabled"/>
     </config>
+    <config id="config.driver.sci_i2c">
+      <property id="config.driver.sci_i2c.param_checking_enable" value="config.driver.sci_i2c.param_checking_enable.bsp"/>
+      <property id="config.driver.sci_i2c.dtc_enable" value="config.driver.sci_i2c.dtc_enable.disabled"/>
+      <property id="config.driver.sci_i2c.addr_mode_10_bit_enable" value="config.driver.sci_i2c.addr_mode_10_bit_enable.disabled"/>
+    </config>
     <config id="config.driver.crc">
       <property id="config.driver.crc.checking" value="config.driver.crc.checking.system"/>
     </config>
@@ -1149,6 +1227,8 @@
       <configSetting altId="etherc0.rmii.txd0.p700" configurationId="etherc0.rmii.txd0"/>
       <configSetting altId="etherc0.rmii.txd1.p406" configurationId="etherc0.rmii.txd1"/>
       <configSetting altId="etherc0.rmii.txd_en.p405" configurationId="etherc0.rmii.txd_en"/>
+      <configSetting altId="iic0.pairing.free" configurationId="iic0.pairing"/>
+      <configSetting altId="iic1.pairing.free" configurationId="iic1.pairing"/>
       <configSetting altId="iic2.mode.enabled.a" configurationId="iic2.mode"/>
       <configSetting altId="iic2.scl.p410" configurationId="iic2.scl"/>
       <configSetting altId="iic2.sda.p409" configurationId="iic2.sda"/>
@@ -1170,6 +1250,10 @@
       <configSetting altId="p108.gpio_mode.gpio_mode_peripheral" configurationId="p108.gpio_mode"/>
       <configSetting altId="p114.ssi0.ssirxd" configurationId="p114"/>
       <configSetting altId="p114.gpio_mode.gpio_mode_peripheral" configurationId="p114.gpio_mode"/>
+      <configSetting altId="p202.sci9.rxd" configurationId="p202"/>
+      <configSetting altId="p202.gpio_mode.gpio_mode_peripheral" configurationId="p202.gpio_mode"/>
+      <configSetting altId="p203.sci9.txd" configurationId="p203"/>
+      <configSetting altId="p203.gpio_mode.gpio_mode_peripheral" configurationId="p203.gpio_mode"/>
       <configSetting altId="p204.ssi0.ssisck" configurationId="p204"/>
       <configSetting altId="p204.gpio_mode.gpio_mode_peripheral" configurationId="p204.gpio_mode"/>
       <configSetting altId="p205.ssi0.ssiws" configurationId="p205"/>
@@ -1192,6 +1276,9 @@
       <configSetting altId="p309.gpio_mode.gpio_mode_peripheral" configurationId="p309.gpio_mode"/>
       <configSetting altId="p310.qspi0.qio3" configurationId="p310"/>
       <configSetting altId="p310.gpio_mode.gpio_mode_peripheral" configurationId="p310.gpio_mode"/>
+      <configSetting altId="p315.sci4.scl" configurationId="p315"/>
+      <configSetting altId="p315.gpio_mode.gpio_mode_peripheral" configurationId="p315.gpio_mode"/>
+      <configSetting altId="p315.gpio_otype.gpio_otype_n_ch_od" configurationId="p315.gpio_otype"/>
       <configSetting altId="p401.can0.ctx" configurationId="p401"/>
       <configSetting altId="p401.gpio_mode.gpio_mode_peripheral" configurationId="p401.gpio_mode"/>
       <configSetting altId="p402.can0.crx" configurationId="p402"/>
@@ -1235,6 +1322,9 @@
       <configSetting altId="p704.gpio_mode.gpio_mode_peripheral" configurationId="p704.gpio_mode"/>
       <configSetting altId="p705.etherc0.rmii.crs_dv" configurationId="p705"/>
       <configSetting altId="p705.gpio_mode.gpio_mode_peripheral" configurationId="p705.gpio_mode"/>
+      <configSetting altId="p900.sci4.sda" configurationId="p900"/>
+      <configSetting altId="p900.gpio_mode.gpio_mode_peripheral" configurationId="p900.gpio_mode"/>
+      <configSetting altId="p900.gpio_otype.gpio_otype_n_ch_od" configurationId="p900.gpio_otype"/>
       <configSetting altId="qspi0.mode.quad.b" configurationId="qspi0.mode"/>
       <configSetting altId="qspi0.pairing.b" configurationId="qspi0.pairing"/>
       <configSetting altId="qspi0.qio0.p307" configurationId="qspi0.qio0"/>
@@ -1243,12 +1333,18 @@
       <configSetting altId="qspi0.qio3.p310" configurationId="qspi0.qio3"/>
       <configSetting altId="qspi0.qspclk.p305" configurationId="qspi0.qspclk"/>
       <configSetting altId="qspi0.qssl.p306" configurationId="qspi0.qssl"/>
+      <configSetting altId="sci4.mode.iic.free" configurationId="sci4.mode"/>
+      <configSetting altId="sci4.scl.p315" configurationId="sci4.scl"/>
+      <configSetting altId="sci4.sda.p900" configurationId="sci4.sda"/>
       <configSetting altId="sci6.mode.asynchronous.free" configurationId="sci6.mode"/>
       <configSetting altId="sci6.rxd.p505" configurationId="sci6.rxd"/>
       <configSetting altId="sci6.txd.p506" configurationId="sci6.txd"/>
       <configSetting altId="sci7.mode.asynchronous.free" configurationId="sci7.mode"/>
       <configSetting altId="sci7.rxd.p614" configurationId="sci7.rxd"/>
       <configSetting altId="sci7.txd.p613" configurationId="sci7.txd"/>
+      <configSetting altId="sci9.mode.asynchronous.free" configurationId="sci9.mode"/>
+      <configSetting altId="sci9.rxd.p202" configurationId="sci9.rxd"/>
+      <configSetting altId="sci9.txd.p203" configurationId="sci9.txd"/>
       <configSetting altId="spi1.miso.p100" configurationId="spi1.miso"/>
       <configSetting altId="spi1.mode.enabled.a" configurationId="spi1.mode"/>
       <configSetting altId="spi1.mosi.p101" configurationId="spi1.mosi"/>

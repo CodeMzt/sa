@@ -16,6 +16,7 @@
 #include "nvm_manager.h"
 #include "drv_microphone.h"
 #include "motion_ctrl.h"
+#include "drv_servo.h"
 
 /* 弧度转角度转换常数 */
 #define RAD2DEG_F 57.2957795130823208768f
@@ -52,7 +53,7 @@ static lv_timer_t * g_teach_record_angle_timer = NULL;
 
 /* UI 对象句柄 */
 static lv_obj_t * label_status_eth;
-static lv_obj_t * label_status_can;
+static lv_obj_t * label_status_motion;
 static lv_obj_t * label_status_mic;
 static lv_obj_t * label_status_wifi;
 static lv_obj_t * label_queue_info;
@@ -152,16 +153,18 @@ void ui_app_init(void) {
  * @brief 更新 UI 状态
  */
 void ui_update_status(void) {
+    char queue_text[sizeof(g_sys_status.queue_list)] = {0};
+
     if (g_sys_status.is_eth_connected != last_sys_status.is_eth_connected) {
         lv_obj_set_style_bg_color(label_status_eth,
             g_sys_status.is_eth_connected ? COL_GREEN : COL_GRAY_DARK, 0);
         last_sys_status.is_eth_connected = g_sys_status.is_eth_connected;
     }
 
-    if (g_sys_status.is_can_connected != last_sys_status.is_can_connected) {
-        lv_obj_set_style_bg_color(label_status_can,
-            g_sys_status.is_can_connected ? COL_GREEN : COL_GRAY_DARK, 0);
-        last_sys_status.is_can_connected = g_sys_status.is_can_connected;
+    if (g_sys_status.is_motion_link_connected != last_sys_status.is_motion_link_connected) {
+        lv_obj_set_style_bg_color(label_status_motion,
+            g_sys_status.is_motion_link_connected ? COL_GREEN : COL_GRAY_DARK, 0);
+        last_sys_status.is_motion_link_connected = g_sys_status.is_motion_link_connected;
     }
 
     if (g_sys_status.is_mic_connected != last_sys_status.is_mic_connected) {
@@ -177,9 +180,11 @@ void ui_update_status(void) {
     }
 
     if (label_queue_info && lv_obj_is_valid(label_queue_info)) {
-        if (strcmp((char*)g_sys_status.queue_list, (char*)last_sys_status.queue_list) != 0) {
-            lv_label_set_text(label_queue_info, g_sys_status.queue_list);
-            strncpy((char*)last_sys_status.queue_list, (char*)g_sys_status.queue_list, sizeof(last_sys_status.queue_list));
+        queue_text_get(queue_text, sizeof(queue_text));
+        if (strcmp(queue_text, (char*)last_sys_status.queue_list) != 0) {
+            lv_label_set_text(label_queue_info, queue_text);
+            strncpy((char*)last_sys_status.queue_list, queue_text, sizeof(last_sys_status.queue_list));
+            last_sys_status.queue_list[sizeof(last_sys_status.queue_list) - 1U] = '\0';
         }
     }
 }
@@ -188,7 +193,7 @@ void ui_update_status(void) {
 /* 样式定义                                                                   */
 /* -------------------------------------------------------------------------- */
 
-#define TEACH_ZERO_BUTTON_NUM 5
+#define TEACH_ZERO_BUTTON_NUM ROBSTRIDE_ACTIVE_MOTOR_NUM
 
 typedef struct {
     uint8_t idx;
@@ -331,8 +336,8 @@ static void create_global_layout(void) {
     label_status_eth = create_status_label(bar, "ETH");
     lv_obj_set_grid_cell(label_status_eth, LV_GRID_ALIGN_STRETCH, 0, 1, LV_GRID_ALIGN_STRETCH, 0, 1);
 
-    label_status_can = create_status_label(bar, "CAN");
-    lv_obj_set_grid_cell(label_status_can, LV_GRID_ALIGN_STRETCH, 1, 1, LV_GRID_ALIGN_STRETCH, 0, 1);
+    label_status_motion = create_status_label(bar, "MOTION");
+    lv_obj_set_grid_cell(label_status_motion, LV_GRID_ALIGN_STRETCH, 1, 1, LV_GRID_ALIGN_STRETCH, 0, 1);
 
     label_status_mic = create_status_label(bar, "MIC");
     lv_obj_set_grid_cell(label_status_mic, LV_GRID_ALIGN_STRETCH, 2, 1, LV_GRID_ALIGN_STRETCH, 0, 1);
@@ -401,13 +406,15 @@ static void create_home_page(void) {
  * @brief 创建触摸模式页面
  */
 static void create_touch_page(void) {
+    char queue_text[sizeof(g_sys_status.queue_list)] = {0};
+
     lv_obj_clean(lv_scr_act());
     cleanup_ui_pointers();
 
     /* === 队列显示 (左侧, 宽度220, 高度2行约40) === */
     label_queue_info = lv_label_create(lv_scr_act());
-    update_queue_display();
-    lv_label_set_text(label_queue_info, g_sys_status.queue_list);
+    queue_text_get(queue_text, sizeof(queue_text));
+    lv_label_set_text(label_queue_info, queue_text);
     lv_obj_set_width(label_queue_info, 220);
     lv_obj_set_height(label_queue_info, 40);
     lv_obj_set_style_text_color(label_queue_info, COL_TEXT_MAIN, 0);
@@ -488,13 +495,15 @@ static void create_touch_page(void) {
  * @brief 创建语音模式页面
  */
 static void create_voice_page(void) {
+    char queue_text[sizeof(g_sys_status.queue_list)] = {0};
+
     lv_obj_clean(lv_scr_act());
     cleanup_ui_pointers();
 
     /* === 队列显示 (左侧, 宽度220, 高度2行约40) === */
     label_queue_info = lv_label_create(lv_scr_act());
-    update_queue_display();
-    lv_label_set_text(label_queue_info, g_sys_status.queue_list);
+    queue_text_get(queue_text, sizeof(queue_text));
+    lv_label_set_text(label_queue_info, queue_text);
     lv_obj_set_width(label_queue_info, 220);
     lv_obj_set_height(label_queue_info, 40);
     lv_obj_set_style_text_color(label_queue_info, COL_TEXT_MAIN, 0);
@@ -900,9 +909,9 @@ static void event_instrument_cb(lv_event_t * e) {
 static void event_queue_back_cb(lv_event_t * e) {
     if (g_sys_status.is_running) return;
 
-    if (g_sys_status.act_queue_count > 0) {
-        remove_instrument(g_sys_status.act_queue_count - 1);
-        update_queue_display();
+    uint8_t queue_count = queue_count_get();
+    if (queue_count > 0U) {
+        remove_instrument((uint8_t) (queue_count - 1U));
         ui_update_status();
     }
 }
@@ -912,9 +921,9 @@ static void event_queue_back_cb(lv_event_t * e) {
  * @param e LVGL 事件对象
  */
 static void event_voice_queue_back_cb(lv_event_t * e) {
-    if (g_sys_status.act_queue_count > 0) {
-        remove_instrument(g_sys_status.act_queue_count - 1);
-        update_queue_display();
+    uint8_t queue_count = queue_count_get();
+    if (queue_count > 0U) {
+        remove_instrument((uint8_t) (queue_count - 1U));
         ui_update_status();
     }
 }
@@ -941,6 +950,7 @@ bool ui_add_instrument_to_queue(instrument_t inst) {
  */
 static void event_teach_submode_cb(lv_event_t * e) {
     int id = (int)(uintptr_t)lv_event_get_user_data(e);
+    user_on_teach_enter();
     switch(id) {
         case 1: 
             g_current_page = PAGE_TEACH_MONITOR;
@@ -961,6 +971,8 @@ static void event_teach_submode_cb(lv_event_t * e) {
  * @brief 创建示教零点标定页面
  */
 static void create_teach_zero_page(void) {
+    bool zero_supported = servo_supports_zero_calibration();
+
     lv_obj_clean(lv_scr_act());
 
     for (int i = 0; i < TEACH_ZERO_BUTTON_NUM; i++) {
@@ -975,6 +987,15 @@ static void create_teach_zero_page(void) {
     lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(title, COL_TEXT_MAIN, 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 45);
+
+    if (!zero_supported) {
+        lv_obj_t * note = lv_label_create(lv_scr_act());
+        lv_label_set_text(note, "Current servo protocol does not support zero calibration");
+        lv_obj_set_style_text_color(note, COL_RED, 0);
+        lv_obj_set_style_text_align(note, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_width(note, 300);
+        lv_obj_align(note, LV_ALIGN_TOP_MID, 0, 62);
+    }
 
     lv_obj_t * cont = lv_obj_create(lv_scr_act());
     lv_obj_set_size(cont, 310, 225);
@@ -995,6 +1016,7 @@ static void create_teach_zero_page(void) {
         ROBSTRIDE_MOTOR_ID_JOINT2,
         ROBSTRIDE_MOTOR_ID_JOINT3,
         ROBSTRIDE_MOTOR_ID_JOINT4,
+        ROBSTRIDE_MOTOR_ID_JOINT5,
         ROBSTRIDE_MOTOR_ID_GRIPPER,
     };
 
@@ -1003,6 +1025,7 @@ static void create_teach_zero_page(void) {
         "J2 ZERO",
         "J3 ZERO",
         "J4 ZERO",
+        "J5 ZERO",
         "GRIPPER ZERO",
     };
 
@@ -1013,12 +1036,7 @@ static void create_teach_zero_page(void) {
 
         int row = i / 2;
         int col = i % 2;
-        if (i == 4) {
-            lv_obj_set_grid_cell(btn, LV_GRID_ALIGN_CENTER, 0, 2, LV_GRID_ALIGN_STRETCH, 2, 1);
-            lv_obj_set_width(btn, 170);
-        } else {
-            lv_obj_set_grid_cell(btn, LV_GRID_ALIGN_STRETCH, col, 1, LV_GRID_ALIGN_STRETCH, row, 1);
-        }
+        lv_obj_set_grid_cell(btn, LV_GRID_ALIGN_STRETCH, col, 1, LV_GRID_ALIGN_STRETCH, row, 1);
 
         lv_obj_t * lbl = lv_label_create(btn);
         lv_label_set_text(lbl, btn_texts[i]);
@@ -1029,7 +1047,12 @@ static void create_teach_zero_page(void) {
         g_teach_zero_ctx[i].btn = btn;
         g_teach_zero_ctx[i].default_text = btn_texts[i];
 
-        lv_obj_add_event_cb(btn, event_teach_zero_set_cb, LV_EVENT_CLICKED, (void*)&g_teach_zero_ctx[i]);
+        if (zero_supported) {
+            lv_obj_add_event_cb(btn, event_teach_zero_set_cb, LV_EVENT_CLICKED, (void*)&g_teach_zero_ctx[i]);
+        } else {
+            lv_obj_set_style_bg_color(btn, COL_GRAY_DARK, 0);
+            lv_obj_add_state(btn, LV_STATE_DISABLED);
+        }
     }
 
     /* === BACK 按钮（直接返回TEACH主页，不弹确认框） === */
@@ -1057,6 +1080,7 @@ static void event_teach_zero_back_cb(lv_event_t * e) {
             g_zero_feedback_timers[i] = NULL;
         }
     }
+    user_on_teach_exit();
     g_current_page = PAGE_DEBUG;
     create_debug_page();
 }
@@ -1066,9 +1090,9 @@ static void event_teach_zero_back_cb(lv_event_t * e) {
  */
 static void event_teach_zero_set_cb(lv_event_t * e) {
     teach_zero_ctx_t * ctx = (teach_zero_ctx_t *)lv_event_get_user_data(e);
-    if (!ctx || !ctx->btn || !lv_obj_is_valid(ctx->btn)) return;
+    if (!ctx || !ctx->btn || !lv_obj_is_valid(ctx->btn) || !servo_supports_zero_calibration()) return;
 
-    fsp_err_t err = robstride_set_zero(ctx->motor_id);
+    fsp_err_t err = servo_set_zero(ctx->motor_id);
 
     lv_obj_remove_style(ctx->btn, &style_btn_std, 0);
     lv_obj_remove_style(ctx->btn, &style_btn_green, 0);
@@ -1131,7 +1155,7 @@ static void create_teach_monitor_page(void) {
     /* === 电机数据显示表格 === */
     lv_obj_t * table = lv_table_create(lv_scr_act());
     lv_table_set_col_cnt(table, 5);
-    lv_table_set_row_cnt(table, 6);
+    lv_table_set_row_cnt(table, ROBSTRIDE_MOTOR_NUM + 1U);
     lv_obj_set_width(table, 310);
     lv_obj_align(table, LV_ALIGN_TOP_MID, 0, 70);
 
@@ -1144,8 +1168,12 @@ static void create_teach_monitor_page(void) {
 
     /* 电机数据行（初始为零） */
     char buf[16];
-    for (int i = 0; i < 5; i++) {
-        snprintf(buf, sizeof(buf), "M%d", i+1);
+    for (int i = 0; i < ROBSTRIDE_MOTOR_NUM; i++) {
+        if (i < ROBSTRIDE_JOINT_NUM) {
+            snprintf(buf, sizeof(buf), "M%d", i + 1);
+        } else {
+            snprintf(buf, sizeof(buf), "GRIP");
+        }
         lv_table_set_cell_value(table, i+1, 0, buf);
         for (int j = 1; j < 5; j++) {
             lv_table_set_cell_value(table, i+1, j, "0.0");
@@ -1190,7 +1218,7 @@ static void teach_monitor_update_cb(lv_timer_t * timer) {
 
     char buf[16];
     /* 从 g_motors 读取数据并更新表格 */
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < ROBSTRIDE_MOTOR_NUM; i++) {
         /* 位置（弧度转角度） */
         float pos = g_motors[i].feedback.position * RAD2DEG_F;
         snprintf(buf, sizeof(buf), "%.2f", pos);
@@ -1215,11 +1243,13 @@ static void teach_monitor_update_cb(lv_timer_t * timer) {
  * @brief 监测页面返回回调
  */
 static void event_teach_monitor_back_cb(lv_event_t * e) {
+    FSP_PARAMETER_NOT_USED(e);
     /* 直接清理全局 timer，防止卡死 */
     if (g_teach_monitor_timer) {
         lv_timer_del(g_teach_monitor_timer);
         g_teach_monitor_timer = NULL;
     }
+    user_on_teach_exit();
     g_current_page = PAGE_DEBUG;
     create_debug_page();
 }
@@ -1331,15 +1361,15 @@ static void create_teach_record_frames_page(uint8_t group_idx) {
     lv_obj_set_style_pad_all(angle_box, 2, 0);
     lv_obj_clear_flag(angle_box, LV_OBJ_FLAG_SCROLLABLE);
 
-    static lv_obj_t * g_angle_labels[4] = {NULL, NULL, NULL, NULL};
+    static lv_obj_t * g_angle_labels[ROBSTRIDE_ACTIVE_JOINT_NUM] = {NULL};
     char buf[16];
-    static lv_coord_t col_dsc_angle[] = {70, 70, 70, 70, LV_GRID_TEMPLATE_LAST};
+    static lv_coord_t col_dsc_angle[] = {58, 58, 58, 58, 58, LV_GRID_TEMPLATE_LAST};
     static lv_coord_t row_dsc_angle[] = {40, LV_GRID_TEMPLATE_LAST};
     lv_obj_set_layout(angle_box, LV_LAYOUT_GRID);
     lv_obj_set_style_grid_column_dsc_array(angle_box, col_dsc_angle, 0);
     lv_obj_set_style_grid_row_dsc_array(angle_box, row_dsc_angle, 0);
 
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < ROBSTRIDE_ACTIVE_JOINT_NUM; i++) {
         snprintf(buf, sizeof(buf), "M%d\n0.0", i+1);
         g_angle_labels[i] = lv_label_create(angle_box);
         lv_label_set_text(g_angle_labels[i], buf);
@@ -1432,7 +1462,7 @@ static void create_teach_record_frames_page(uint8_t group_idx) {
     if (g_teach_record_angle_timer) {
         lv_timer_del(g_teach_record_angle_timer);
     }
-    g_teach_record_angle_timer = lv_timer_create(teach_record_angle_update_cb, 200, (void**)g_angle_labels);
+    g_teach_record_angle_timer = lv_timer_create(teach_record_angle_update_cb, 200, (void *)g_angle_labels);
 
     /* === BACK 按钮 === */
     lv_obj_t * btn_back = lv_btn_create(lv_scr_act());
@@ -1468,7 +1498,7 @@ static void teach_record_angle_update_cb(lv_timer_t * timer) {
     if (!labels) return;
 
     char buf[16];
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < ROBSTRIDE_ACTIVE_JOINT_NUM; i++) {
         if (labels[i] && lv_obj_is_valid(labels[i])) {
             float angle = g_motors[i].feedback.position * RAD2DEG_F;
             snprintf(buf, sizeof(buf), "M%d:%.1f", i+1, angle);
@@ -1551,6 +1581,8 @@ static void event_teach_frame_record_cb(lv_event_t * e) {
  * @brief RECORD 页面 BACK 回调（直接返回 TEACH 主页）
  */
 static void event_teach_record_main_back_cb(lv_event_t * e) {
+    FSP_PARAMETER_NOT_USED(e);
+    user_on_teach_exit();
     g_current_page = PAGE_DEBUG;
     create_debug_page();
 }

@@ -10,6 +10,13 @@
 #include "shared_data.h"
 #include "sys_log.h"
 
+/* -------------------------------------------------------------------------- */
+/* 旧模块说明                                                                  */
+/*                                                                            */
+/* 本文件实现的是旧版 CANFD 收发与解析逻辑。当前项目保留本实现，仅用于兼容      */
+/* 旧接口和共享数据定义；新的运控任务不再调用这里的收发链路。                   */
+/* -------------------------------------------------------------------------- */
+
 volatile uint16_t g_can_rx_count;
 volatile canfd_force_sensor_data_t g_force_sensor_data = {
     .sensor_can_id = CANFD_FORCE_SENSOR_CAN_ID,

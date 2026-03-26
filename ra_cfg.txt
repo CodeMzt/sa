@@ -181,8 +181,8 @@ FSP Configuration
       P115 C1 - - - - Disabled - - "BUS_ASYNCH0: A01; GPT4: GTIOC4A; SSI0: SSITXD0" - None - - 
       P200 C8 - - - - Disabled - - "ICU0: NMI" - None - - 
       P201 B8 - - - - Disabled - - "SYSTEM0: MD" - None - - 
-      P202 B12 - - - - Disabled - - "AGT3: AGTOB3; BUS_ASYNCH0: BC1; CAN0: CRX0; CTSU0: TS19; ETHERC_MII0: ET0_ERXD2; GPT5: GTIOC5B; ICU0: IRQ03; SCI2: SCK2; SCI9: RXD9; SCI9: SCL9; SDHI0: SD0DAT6; SPI0: MISOA" - None - - 
-      P203 D11 - - - - Disabled - - "AGT3: AGTOA3; BUS_ASYNCH0: A19; CAN0: CTX0; CTSU0: TS18; ETHERC_MII0: ET0_COL; GPT5: GTIOC5A; ICU0: IRQ02; SCI2: CTSRTS2; SCI9: SDA9; SCI9: TXD9; SDHI0: SD0DAT5; SPI0: MOSIA" - None - - 
+      P202 B12 SCI9_RXD9 - Low None "Peripheral mode" CMOS None "AGT3: AGTOB3; BUS_ASYNCH0: BC1; CAN0: CRX0; CTSU0: TS19; ETHERC_MII0: ET0_ERXD2; GPT5: GTIOC5B; ICU0: IRQ03; SCI2: SCK2; SCI9: RXD9; SCI9: SCL9; SDHI0: SD0DAT6; SPI0: MISOA" - IO - - 
+      P203 D11 SCI9_TXD9 - Low None "Peripheral mode" CMOS None "AGT3: AGTOA3; BUS_ASYNCH0: A19; CAN0: CTX0; CTSU0: TS18; ETHERC_MII0: ET0_COL; GPT5: GTIOC5A; ICU0: IRQ02; SCI2: CTSRTS2; SCI9: SDA9; SCI9: TXD9; SDHI0: SD0DAT5; SPI0: MOSIA" - IO - - 
       P204 A13 SSI0_SSIBCK0 - Low - "Peripheral mode" CMOS None "AGT1: AGTIO1; BUS_ASYNCH0: A18; CAC0: CACREF; CTSU0: TS00; ETHERC_MII0: ET0_RX_DV; GPT_OPS0: GTIW; GPT4: GTIOC4B; SCI4: SCK4; SCI9: SCK9; SDHI0: SD0DAT4; SPI0: RSPCKA; SSI0: SSIBCK0; USB_FS0: USB_OVRCURB" - IO - - 
       P205 E12 SSI0_SSILRCK0 - Low None "Peripheral mode" CMOS None "AGT1: AGTO1; BUS_ASYNCH0: A16; CGC0: CLKOUT; CTSU0: TS01; ETHERC_MII0: ET0_WOL; ETHERC_RMII0: ET0_WOL; GPT_OPS0: GTIV; GPT4: GTIOC4A; ICU0: IRQ01; IIC1: SCL1; SCI4: SDA4; SCI4: TXD4; SCI9: CTSRTS9; SDHI0: SD0DAT3; SPI0: SSLA0; SSI0: SSILRCK0; USB_FS0: USB_OVRCURA" - IO - - 
       P206 D12 - - - - Disabled - - "BUS_ASYNCH0: WAIT; CEC0: CECIO; CTSU0: TS02; ETHERC_MII0: ET0_LINKSTA; ETHERC_RMII0: ET0_LINKSTA; GPT_OPS0: GTIU; ICU0: IRQ00; IIC1: SDA1; SCI4: RXD4; SCI4: SCL4; SCI9: CTS9; SDHI0: SD0DAT2; SPI0: SSLA1; SSI0: SSIDATA0; USB_FS0: USB_VBUSEN" - None - - 
@@ -209,7 +209,7 @@ FSP Configuration
       P312 C7 - - - - Disabled - - "AGT1: AGTOA1; BUS_ASYNCH0: CS3; SCI3: CTSRTS3" - None - - 
       P313 A12 - - - - Disabled - - "BUS_ASYNCH0: A20; ETHERC_MII0: ET0_ERXD3; SDHI0: SD0DAT7" - None - - 
       P314 C11 - - - - Disabled - - "ADC0: ADTRG0; BUS_ASYNCH0: A21" - None - - 
-      P315 B11 - - - - Disabled - - "BUS_ASYNCH0: A22; SCI4: RXD4; SCI4: SCL4" - None - - 
+      P315 B11 SCI4_SCL4 - Low - "Peripheral mode" "n-ch open drain" None "BUS_ASYNCH0: A22; SCI4: RXD4; SCI4: SCL4" - IO - - 
       P400 N13 - - - - Disabled - - "ADC1: ADTRG1; AGT1: AGTIO1; ETHERC_MII0: ET0_WOL; ETHERC_RMII0: ET0_WOL; GPT6: GTIOC6A; ICU0: IRQ00; IIC0: SCL0; SCI4: SCK4; SCI7: SCK7; SSI_COMMON0: AUDIO_CLK" - None - - 
       P401 R15 CANFD0_CTX0 - Low None "Peripheral mode" CMOS None "CAN0: CTX0; ETHERC_MII0: ET0_MDC; ETHERC_RMII0: ET0_MDC; GPT_POEG0: GTETRGA; GPT6: GTIOC6B; ICU0: IRQ05; IIC0: SDA0; SCI4: CTSRTS4; SCI7: SDA7; SCI7: TXD7" - IO - - 
       P402 P14 CANFD0_CRX0 - Low None "Peripheral mode" CMOS None "AGT0: AGTIO0; AGT1: AGTIO1; AGT2: AGTIO2; AGT3: AGTIO3; CAC0: CACREF; CAN0: CRX0; ETHERC_MII0: ET0_MDIO; ETHERC_RMII0: ET0_MDIO; ICU0: IRQ04; RTC0: RTCIC0; SCI4: CTS4; SCI7: RXD7; SCI7: SCL7; SSI_COMMON0: AUDIO_CLK" - IO - - 
@@ -270,7 +270,7 @@ FSP Configuration
       P804 P3 - - - - Disabled - - "ICU0: IRQ01" - None - - 
       P805 R13 - - - - Disabled - - "SCI5: SDA5; SCI5: TXD5" - None - - 
       P806 P12 - - - - Disabled - - "ICU0: IRQ00" - None - - 
-      P900 A11 - - - - Disabled - - "BUS_ASYNCH0: A23; SCI4: SDA4; SCI4: TXD4" - None - - 
+      P900 A11 SCI4_SDA4 - Low - "Peripheral mode" "n-ch open drain" None "BUS_ASYNCH0: A23; SCI4: SDA4; SCI4: TXD4" - IO - - 
       P901 C10 - - - - Disabled - - "AGT1: AGTIO1; SCI4: SCK4" - None - - 
       P905 B7 - - - - Disabled - - "ICU0: IRQ08; USB_FS0: USB_ID" - None - - 
       P906 A7 - - - - Disabled - - "ICU0: IRQ09; USB_FS0: USB_EXICEN" - None - - 
@@ -592,6 +592,11 @@ FSP Configuration
     Write Protect Enable: Disabled
     
   Module "FreeRTOS Heap 4"
+  Module "I2C Master (r_sci_i2c)"
+    Parameter Checking: Default (BSP)
+    DTC on Transmission and Reception: Disabled
+    10-bit slave addressing: Disabled
+    
   FreeRTOS
     General: Custom FreeRTOSConfig.h: 
     General: Use Preemption: Enabled
@@ -1088,6 +1093,71 @@ FSP Configuration
       Extra Features: Interrupt Skipping (Channels with GTITC only): Skip ADC Events: None
       Extra Features: Output Disable: GTIOCA Disable Setting: Disable Prohibited
       Extra Features: Output Disable: GTIOCB Disable Setting: Disable Prohibited
+      
+  Thread "servo_bus"
+    Symbol: servo_bus
+    Name: servo_bus
+    Stack size (bytes): 0x800
+    Priority: 3
+    Thread Context: NULL
+    Memory Allocation: Static
+    Allocate Secure Context: Enable
+    
+    Instance "g_uart_servo UART (r_sci_uart)"
+      General: Name: g_uart_servo
+      General: Channel: 9
+      General: Data Bits: 8bits
+      General: Parity: None
+      General: Stop Bits: 1bit
+      Baud: Baud Rate: 115200
+      Baud: Baud Rate Modulation: Disabled
+      Baud: Max Error (%): 5
+      Flow Control: CTS/RTS Selection: Hardware RTS
+      Flow Control: Software RTS Port: Disabled
+      Flow Control: Software RTS Pin: Disabled
+      Extra: Clock Source: Internal Clock
+      Extra: Start bit detection: Falling Edge
+      Extra: Noise Filter: Disable
+      Extra: Receive FIFO Trigger Level: Max
+      Extra: IrDA: Enable: Disabled
+      Extra: IrDA: RXD Polarity Switching: Normal
+      Extra: IrDA: TXD Polarity Switching: Normal
+      Extra: RS-485: DE Pin: Disable
+      Extra: RS-485: DE Pin Polarity: Active High
+      Extra: RS-485: DE Port Number: Disabled
+      Extra: RS-485: DE Pin Number: Disabled
+      Interrupts: Callback: uart_servo_callback
+      Interrupts: Receive Interrupt Priority: Priority 10
+      Interrupts: Transmit Data Empty Interrupt Priority: Priority 10
+      Interrupts: Transmit End Interrupt Priority: Priority 12
+      Interrupts: Error Interrupt Priority: Priority 12
+      
+      Instance "g_transfer5 Transfer (r_dtc) SCI9 TXI (Transmit data empty)"
+        Name: g_transfer5
+        Mode: Normal
+        Transfer Size: 1 Byte
+        Destination Address Mode: Fixed
+        Source Address Mode: Incremented
+        Repeat Area (Unused in Normal Mode): Source
+        Interrupt Frequency: After all transfers have completed
+        Number of Transfers: 0
+        Number of Blocks (Valid only in Block Mode): 0
+        Number of Transfer Descriptors: 1
+        Activation Source: SCI9 TXI (Transmit data empty)
+        
+    Instance "g_i2c_touch I2C Master (r_sci_i2c)"
+      Name: g_i2c_touch
+      Channel: 4
+      Slave Address : 0x0A
+      Address Mode: 7-Bit
+      Rate: Standard
+      Custom Rate (bps): 0
+      SDA Output Delay (nano seconds): 300
+      Noise filter setting: Use clock signal divided by 1 with noise filter
+      Bit Rate Modulation: Enable
+      Callback: sci_i2c4_master_callback
+      Interrupt Priority Level: Priority 12
+      RX Interrupt Priority Level [Only used when DTC is enabled]: Disabled
       
   Object "g_log_queue Queue"
     Symbol: g_log_queue
