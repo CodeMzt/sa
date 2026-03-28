@@ -1,0 +1,34 @@
+flowchart LR
+  %% Draw.io-friendly Mermaid (no HTML labels)
+
+  subgraph L1[边缘智能层]
+    AI_AUDIO[语音采集 INMP441]
+    AI_INFER[Edge AI推理]
+    AI_CMD[指令判定与投票]
+  end
+
+  subgraph L2[高精度机械执行层]
+    MC_TRAJ[轨迹规划 自然三次样条]
+    MC_GRAV[重力补偿]
+    MC_CTRL[运动控制状态机]
+    MC_CAN[CANFD控制帧]
+    ACT_EL05[EL05执行器组 4关节+夹爪]
+  end
+
+  subgraph L3[数字孪生监控层 实现态]
+    DT_MON[本地监控 UI]
+    DT_PKT[状态打包]
+    DT_ETH[以太网UDP上报]
+    DT_PC[上位机监控与参数工具]
+    DT_CFG[参数下发与配置同步]
+  end
+
+  AI_AUDIO --> AI_INFER --> AI_CMD --> MC_CTRL
+  MC_TRAJ --> MC_CTRL
+  MC_GRAV --> MC_CTRL
+  MC_CTRL --> MC_CAN --> ACT_EL05
+
+  ACT_EL05 --> DT_PKT
+  DT_PKT --> DT_ETH --> DT_PC
+  ACT_EL05 --> DT_MON
+  DT_PC --> DT_CFG --> MC_CTRL

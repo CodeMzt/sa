@@ -1,0 +1,105 @@
+flowchart TB
+  %% Software overall architecture (reordered for shorter links, draw.io-friendly)
+
+  subgraph T0[线程与任务层 FreeRTOS]
+    direction LR
+    T_CAN[can_comms]
+    T_NET[net_connect]
+    T_WIFI[wifi_debug]
+    T_UI[screen_interact]
+    T_VOICE[voice_command]
+    T_LOG[log_task]
+  end
+
+  subgraph T1[业务服务层 Entry]
+    direction LR
+    S_CAN[CAN通信业务]
+    S_NET[网络上报业务]
+    S_WIFI[WiFi配置业务]
+    S_UI[屏幕交互业务]
+    S_VOICE[语音命令业务]
+    S_LOG[日志业务]
+  end
+
+  subgraph T2[算法与控制层]
+    direction LR
+    A_TRAJ[轨迹规划]
+    A_GRAV[重力补偿]
+    A_MOTION[运动控制状态机]
+    A_EI[Edge AI推理]
+  end
+
+  subgraph T3[协议与数据层]
+    direction LR
+    P_ROB[RobStride CAN协议]
+    P_UDP[UDP状态包]
+    P_JSON[JSON命令协议]
+    P_SHARE[共享状态与队列]
+    P_LOG[日志输出协议]
+  end
+
+  subgraph T4[驱动与HAL层]
+    direction LR
+    D_CAN[CANFD驱动]
+    D_ETH[以太网驱动]
+    D_WIFI[WiFi AT驱动 UART]
+    D_HMI[显示触控驱动 SPI/I2C]
+    D_LOG[日志串口驱动 UART]
+    D_QSPI[QSPI存储驱动]
+    D_MIC[麦克风驱动 I2S]
+  end
+
+  subgraph T5[硬件层]
+    direction LR
+    H_MCU[RA6M5]
+    H_MOTOR[EL05电机组]
+    H_PHY[LAN8720A]
+    H_WIFI[W800]
+    H_HMI[ST7796S + FT5x06]
+    H_LOG[串口日志接口 SCI7]
+    H_FLASH[W25Q64]
+    H_MIC[INMP441]
+  end
+
+  T_CAN --> S_CAN
+  T_NET --> S_NET
+  T_LOG --> S_LOG
+  T_UI --> S_UI
+  T_WIFI --> S_WIFI
+  T_VOICE --> S_VOICE
+
+  A_TRAJ --> A_MOTION
+  A_GRAV --> A_MOTION
+  S_CAN --> A_MOTION
+  S_VOICE --> A_EI
+  A_EI --> A_MOTION
+
+  A_MOTION --> P_ROB
+  S_NET --> P_UDP
+  S_WIFI --> P_JSON
+  S_UI --> P_SHARE
+  S_LOG --> P_LOG
+
+  P_ROB --> D_CAN
+  P_UDP --> D_ETH
+  P_JSON --> D_WIFI
+  P_SHARE --> D_HMI
+  P_LOG --> D_LOG
+  P_SHARE --> D_QSPI
+  A_EI --> D_MIC
+
+  D_CAN --> H_MOTOR
+  D_ETH --> H_PHY
+  D_WIFI --> H_WIFI
+  D_HMI --> H_HMI
+  D_LOG --> H_LOG
+  D_QSPI --> H_FLASH
+  D_MIC --> H_MIC
+
+  H_MCU --> H_MOTOR
+  H_MCU --> H_PHY
+  H_MCU --> H_WIFI
+  H_MCU --> H_HMI
+  H_MCU --> H_LOG
+  H_MCU --> H_FLASH
+  H_MCU --> H_MIC

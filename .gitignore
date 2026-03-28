@@ -23,19 +23,45 @@ compile_commands.json
 
 # Eclipse/IDE files
 .settings/
+.metadata/
 .cproject
 .project
+.classpath
+.factorypath
+.trae/
+.vscode/
 
 # Doxygen output
-docs/
 
 # Temporary files
 *.tmp
 *.temp
 
+# Python cache / venv
+__pycache__/
+*.py[cod]
+.Python
+.venv/
+venv/
+ENV/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.tox/
+*.egg-info/
+
+# Common build/artifact folders
+build/
+dist/
+out/
+memory/
+
 # OS generated files
 Thumbs.db
 .DS_Store
+Desktop.ini
 
 # Build system files
 Makefile
@@ -56,3 +82,6 @@ makefile
 # Backup files
 *.bak
 *.backup
+
+# Logs
+*.log
