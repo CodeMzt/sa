@@ -18,7 +18,6 @@ void sci_uart_rxi_isr(void);
 void sci_uart_txi_isr(void);
 void sci_uart_tei_isr(void);
 void sci_uart_eri_isr(void);
-void spi_rxi_isr(void);
 void spi_tei_isr(void);
 void spi_eri_isr(void);
 void dmac_int_isr(void);
@@ -52,14 +51,14 @@ void sci_i2c_tei_isr(void);
 #define SCI7_TEI_IRQn          ((IRQn_Type) 8) /* SCI7 TEI (Transmit end) */
 #define VECTOR_NUMBER_SCI7_ERI ((IRQn_Type) 9) /* SCI7 ERI (Receive error) */
 #define SCI7_ERI_IRQn          ((IRQn_Type) 9) /* SCI7 ERI (Receive error) */
-#define VECTOR_NUMBER_SPI1_RXI ((IRQn_Type) 10) /* SPI1 RXI (Receive buffer full) */
-#define SPI1_RXI_IRQn          ((IRQn_Type) 10) /* SPI1 RXI (Receive buffer full) */
-#define VECTOR_NUMBER_SPI1_TEI ((IRQn_Type) 11) /* SPI1 TEI (Transmission complete event) */
-#define SPI1_TEI_IRQn          ((IRQn_Type) 11) /* SPI1 TEI (Transmission complete event) */
-#define VECTOR_NUMBER_SPI1_ERI ((IRQn_Type) 12) /* SPI1 ERI (Error) */
-#define SPI1_ERI_IRQn          ((IRQn_Type) 12) /* SPI1 ERI (Error) */
-#define VECTOR_NUMBER_DMAC1_INT ((IRQn_Type) 13) /* DMAC1 INT (DMAC1 transfer end) */
-#define DMAC1_INT_IRQn          ((IRQn_Type) 13) /* DMAC1 INT (DMAC1 transfer end) */
+#define VECTOR_NUMBER_SPI1_TEI ((IRQn_Type) 10) /* SPI1 TEI (Transmission complete event) */
+#define SPI1_TEI_IRQn          ((IRQn_Type) 10) /* SPI1 TEI (Transmission complete event) */
+#define VECTOR_NUMBER_SPI1_ERI ((IRQn_Type) 11) /* SPI1 ERI (Error) */
+#define SPI1_ERI_IRQn          ((IRQn_Type) 11) /* SPI1 ERI (Error) */
+#define VECTOR_NUMBER_DMAC1_INT ((IRQn_Type) 12) /* DMAC1 INT (DMAC1 transfer end) */
+#define DMAC1_INT_IRQn          ((IRQn_Type) 12) /* DMAC1 INT (DMAC1 transfer end) */
+#define VECTOR_NUMBER_DMAC0_INT ((IRQn_Type) 13) /* DMAC0 INT (DMAC0 transfer end) */
+#define DMAC0_INT_IRQn          ((IRQn_Type) 13) /* DMAC0 INT (DMAC0 transfer end) */
 #define VECTOR_NUMBER_IIC2_RXI ((IRQn_Type) 14) /* IIC2 RXI (Receive data full) */
 #define IIC2_RXI_IRQn          ((IRQn_Type) 14) /* IIC2 RXI (Receive data full) */
 #define VECTOR_NUMBER_IIC2_TXI ((IRQn_Type) 15) /* IIC2 TXI (Transmit data empty) */

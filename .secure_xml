@@ -93,6 +93,9 @@
       <configSetting altId="p105.gpio_speed.gpio_speed_highspeedhigh" configurationId="p105.gpio_drivecapacity"/>
       <configSetting altId="p105.gpio_mode.gpio_mode_out.high" configurationId="p105.gpio_mode"/>
       <configSetting altId="p108.gpio_mode.gpio_mode_peripheral" configurationId="p108.gpio_mode"/>
+      <configSetting altId="p113.output.low" configurationId="p113"/>
+      <configSetting altId="p113.gpio_speed.gpio_speed_high" configurationId="p113.gpio_drivecapacity"/>
+      <configSetting altId="p113.gpio_mode.gpio_mode_out.low" configurationId="p113.gpio_mode"/>
       <configSetting altId="p114.gpio_mode.gpio_mode_peripheral" configurationId="p114.gpio_mode"/>
       <configSetting altId="p202.gpio_mode.gpio_mode_peripheral" configurationId="p202.gpio_mode"/>
       <configSetting altId="p203.gpio_mode.gpio_mode_peripheral" configurationId="p203.gpio_mode"/>
@@ -138,6 +141,12 @@
       <configSetting altId="p705.gpio_mode.gpio_mode_peripheral" configurationId="p705.gpio_mode"/>
       <configSetting altId="p900.gpio_mode.gpio_mode_peripheral" configurationId="p900.gpio_mode"/>
       <configSetting altId="p900.gpio_otype.gpio_otype_n_ch_od" configurationId="p900.gpio_otype"/>
+      <configSetting altId="p907.output.high" configurationId="p907"/>
+      <configSetting altId="p907.gpio_speed.gpio_speed_high" configurationId="p907.gpio_drivecapacity"/>
+      <configSetting altId="p907.gpio_mode.gpio_mode_out.high" configurationId="p907.gpio_mode"/>
+      <configSetting altId="p908.output.low" configurationId="p908"/>
+      <configSetting altId="p908.gpio_speed.gpio_speed_high" configurationId="p908.gpio_drivecapacity"/>
+      <configSetting altId="p908.gpio_mode.gpio_mode_out.low" configurationId="p908.gpio_mode"/>
       <configSetting altId="qspi0.qio0.p307" configurationId="qspi0.qio0" isUsedByDriver="true" peripheral="QSPI0"/>
       <configSetting altId="qspi0.qio1.p308" configurationId="qspi0.qio1" isUsedByDriver="true" peripheral="QSPI0"/>
       <configSetting altId="qspi0.qio2.p309" configurationId="qspi0.qio2" isUsedByDriver="true" peripheral="QSPI0"/>

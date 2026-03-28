@@ -8,7 +8,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
-#include "robstride_motor.h"
+#include "motor_state.h"
 #include "trajectory.h"
 
 /* -------------------------------------------------------------------------- */
@@ -19,7 +19,7 @@
 /* 2. 夹爪使用电机模式定扭矩；                                                  */
 /* 3. 上层动作队列、录帧/回放入口保持兼容。                                     */
 /*                                                                            */
-/* 注意：这里虽然仍复用了 `robstride_motor.h` 里的 ID、限位和镜像定义，但旧版     */
+/* 注意：这里复用了 motor_state 的 ID、限位和镜像定义；旧版 CAN 运控链路已退役。 */
 /* CAN 运控函数本身已经不是当前有效控制路径。                                  */
 /* -------------------------------------------------------------------------- */
 
@@ -59,17 +59,23 @@ typedef enum {
     HANDOFF_DONE
 } handoff_state_t;
 
+typedef enum {
+    GRIPPER_TOUCH_WAIT_NONE = 0,
+    GRIPPER_TOUCH_WAIT_GRIP,
+    GRIPPER_TOUCH_WAIT_RELEASE
+} gripper_touch_wait_state_t;
+
 /**
  * @brief 运控配置参数
  */
 typedef struct {
     struct {
-        float kp[ROBSTRIDE_JOINT_NUM];
-        float kd[ROBSTRIDE_JOINT_NUM];
+        float kp[MOTOR_JOINT_NUM];
+        float kd[MOTOR_JOINT_NUM];
     } controller;
 
-    float max_torque[ROBSTRIDE_JOINT_NUM];
-    float max_velocity[ROBSTRIDE_JOINT_NUM];
+    float max_torque[MOTOR_JOINT_NUM];
+    float max_velocity[MOTOR_JOINT_NUM];
 } motion_ctrl_config_t;
 
 /**
@@ -81,15 +87,15 @@ typedef struct {
 
     traj_controller_t trajectory;
     float seq_start_time;
-    float playback_upload_q[ROBSTRIDE_ACTIVE_JOINT_NUM];
+    float playback_upload_q[MOTOR_ACTIVE_JOINT_NUM];
     bool playback_upload_q_valid;
 
-    float hold_q_ref[ROBSTRIDE_JOINT_NUM];
+    float hold_q_ref[MOTOR_JOINT_NUM];
     bool hold_q_valid;
     bool idle_lock_active;
     bool teach_locked;
-    float teach_lock_q[ROBSTRIDE_JOINT_NUM];
-    float teach_prev_q[ROBSTRIDE_JOINT_NUM];
+    float teach_lock_q[MOTOR_JOINT_NUM];
+    float teach_prev_q[MOTOR_JOINT_NUM];
     float teach_settle_s;
 
     uint8_t teach_jog_motor_id;
@@ -105,14 +111,22 @@ typedef struct {
 
     gripper_hold_state_t gripper_hold_state;
     handoff_state_t handoff_state;
+    gripper_touch_wait_state_t gripper_touch_wait_state;
     float gripper_release_timer;
     float gripper_keepalive_timer;
     float gripper_action_pause_s;
+    float gripper_touch_wait_log_timer;
     float handoff_release_stop_timer;
 
     bool is_initialized;
     bool emergency_stop;
-    uint8_t torque_limit_cycles[ROBSTRIDE_JOINT_NUM];
+    /**
+     * @brief 零力模式标志（用于链路故障/保护时释放扭矩）
+     *
+     * 置位后状态机保持在 TEACHING，但不会自动重锁关节。
+     */
+    bool zero_force_mode;
+    uint8_t torque_limit_cycles[MOTOR_JOINT_NUM];
 } motion_controller_t;
 
 /**
@@ -144,6 +158,16 @@ bool motion_ctrl_set_motion_mode(motion_controller_t *ctrl);
  * @return false 失败
  */
 bool motion_ctrl_start_teaching(motion_controller_t *ctrl);
+
+/**
+ * @brief 进入零力模式（释放关节与夹爪扭矩）
+ *
+ * 用于链路失联/保护触发等场景，强制将状态切到 TEACHING 并保持零力，
+ * 直到上层重新进入正常 TEACHING/PLAYBACK 或显式 stop。
+ *
+ * @param ctrl 控制器实例
+ */
+void motion_ctrl_enter_zero_force(motion_controller_t *ctrl);
 
 /**
  * @brief 启动轨迹回放
@@ -215,8 +239,8 @@ motion_state_t motion_ctrl_get_state(const motion_controller_t *ctrl);
  * @param enable_joint1 兼容保留参数，目前不再生效
  */
 void motion_ctrl_set_teach_params(motion_controller_t *ctrl,
-                                  const float kp[ROBSTRIDE_JOINT_NUM],
-                                  const float kd[ROBSTRIDE_JOINT_NUM],
+                                  const float kp[MOTOR_JOINT_NUM],
+                                  const float kd[MOTOR_JOINT_NUM],
                                   bool enable_joint1);
 
 /**
@@ -226,8 +250,8 @@ void motion_ctrl_set_teach_params(motion_controller_t *ctrl,
  * @param kd 阻尼参数
  */
 void motion_ctrl_set_playback_params(motion_controller_t *ctrl,
-                                     const float kp[ROBSTRIDE_JOINT_NUM],
-                                     const float kd[ROBSTRIDE_JOINT_NUM]);
+                                     const float kp[MOTOR_JOINT_NUM],
+                                     const float kd[MOTOR_JOINT_NUM]);
 
 /**
  * @brief 触发急停

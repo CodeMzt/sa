@@ -1,163 +1,114 @@
-# SurgiDeliver — Intelligent Surgical Instrument Delivery Arm
+# SurgiDeliver — Intelligent Surgical Instrument Delivery Arm（servo_bus 版本）
 
-An embedded system for an intelligent surgical instrument delivery robotic arm, built on the Renesas RA6M5 microcontroller with FreeRTOS. The system integrates Edge-AI voice recognition, CAN-FD motor control, real-time trajectory planning, and a networked digital-twin monitoring layer.
+本仓库为 Renesas RA6M5 + FreeRTOS 的嵌入式固件工程，包含语音识别、屏幕 UI、网络状态上报与机器人运控（示教/回放/空闲保持）、夹爪控制以及触觉/力反馈处理。
 
----
-
-## Table of Contents
-
-- [System Architecture](#system-architecture)
-- [Hardware Overview](#hardware-overview)
-- [Software Overview](#software-overview)
-- [Repository Structure](#repository-structure)
-- [Desktop Monitoring App](#desktop-monitoring-app)
-- [Build & Flash](#build--flash)
-- [Author](#author)
+重要：本 README 以 **servo_bus 版本**为准。当前实际生效的运控主链为 **`servo_bus -> motion_ctrl -> drv_servo`**；旧的 `can_comms/CANFD` 逻辑为历史遗留路径，可能仍保留在代码中供兼容或参考，但不作为当前主控制链路。
 
 ---
 
-## System Architecture
+## 目录
 
-The system is organized into three functional layers:
+- [系统架构](#系统架构)
+- [软件任务](#软件任务)
+- [运控主链](#运控主链)
+- [仓库结构](#仓库结构)
+- [桌面监控工具](#桌面监控工具)
+- [构建与烧录](#构建与烧录)
+
+---
+
+## 系统架构
+
+系统按功能大致分为三层：
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  Layer 1 · Edge Intelligence                                │
-│  INMP441 Mic → Edge AI Inference → Vote & Command           │
+│  Mic → Edge AI Inference → Vote & Command                   │
 └───────────────────────────┬─────────────────────────────────┘
                             │
 ┌───────────────────────────▼─────────────────────────────────┐
-│  Layer 2 · High-Precision Mechanical Execution              │
-│  Cubic-Spline Trajectory + Gravity Compensation             │
-│  → Motion-Control State Machine → CAN-FD → EL05 Actuators │
+│  Layer 2 · Motion Execution (servo_bus)                      │
+│  Trajectory → Motion State Machine → Serial Servo Bus        │
+│  + Gripper Control + Touch / Force Feedback                  │
 └───────────────────────────┬─────────────────────────────────┘
                             │
 ┌───────────────────────────▼─────────────────────────────────┐
-│  Layer 3 · Digital-Twin Monitoring                          │
-│  Local LVGL UI + Ethernet UDP Reporting + PC Tool           │
+│  Layer 3 · Monitoring                                         │
+│  LVGL UI + Ethernet UDP Reporting + PC Tool                   │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-Architecture diagrams (Mermaid source) are available in the [`graph/`](graph/) directory and can be imported into draw.io via **Arrange → Insert → Advanced → Mermaid**.
+架构图（Mermaid 源码）在 `docs/architecture/` 目录，可导入 draw.io（Arrange → Insert → Advanced → Mermaid）。
 
 ---
 
-## Hardware Overview
+## 软件任务
 
-| Component | Part | Interface |
-|-----------|------|-----------|
-| MCU | Renesas RA6M5 | — |
-| Joint motors (×4) | EL05 | CAN-FD (CANFD0) |
-| Gripper motor (×1) | EL05 | CAN-FD (CANFD0) |
-| Ethernet PHY | LAN8720A | RMII |
-| WiFi module | W800 | UART (SCI6) |
-| Display | ST7796S | SPI1 |
-| Touch controller | FT5x06 | I2C (IIC2) |
-| Microphone | INMP441 | I2S (SSI0 + GPT) |
-| External flash | W25Q64 | QSPI0 |
-| Debug UART | — | UART (SCI7) |
+固件运行于 FreeRTOS，主要任务如下（入口文件在 `src/*_entry.c`）：
 
----
-
-## Software Overview
-
-The firmware runs on **FreeRTOS** and is divided into the following tasks:
-
-| Task | Entry file | Responsibility |
-|------|-----------|----------------|
-| `can_comms` | `src/can_comms_entry.c` | CAN-FD communication with EL05 motors |
-| `net_connect` | `src/net_connect_entry.c` | Ethernet / UDP state reporting |
-| `wifi_debug` | `src/wifi_debug_entry.c` | WiFi AT configuration |
-| `screen_interact` | `src/screen_interact_entry.c` | LVGL touch-screen UI |
-| `voice_command` | `src/voice_command_entry.c` | Microphone capture + Edge-AI inference |
-| `log_task` | `src/log_task_entry.c` | Serial log output |
-
-### Key modules (`src/modules/`)
-
-| Module | Path | Description |
-|--------|------|-------------|
-| Motion control | `motion_ctrl/` | State machine, cubic-spline trajectory, gravity compensation |
-| CAN-FD driver | `canfd/` | RobStride CAN-FD protocol driver |
-| Voice / mic driver | `voice/` | INMP441 driver + Edge-AI integration |
-| Screen / UI | `screen/` | SPI display driver, I2C touch driver, LVGL port, UI application |
-| WiFi driver | `wifi/` | W800 AT driver, NVM configuration storage |
-| Ethernet | `ethernet/` | Network hooks for LwIP |
-| Logging | `log/` | Lightweight logging subsystem |
-
-### Tools (`src/tools/`)
-
-- **`shared_data`** — inter-task shared state and queues
-- **`packet_packer`** — UDP status-packet serialization
-- **`test_mode`** — hardware test helpers
+| Task | Entry file | 说明 |
+|------|-----------|------|
+| `servo_bus` | `src/servo_bus_entry.c` | 实际运控主线程：模式切换/周期调度/链路与急停 |
+| `screen_interact` | `src/screen_interact_entry.c` | LVGL UI 与示教保存 |
+| `voice_command` | `src/voice_command_entry.c` | 麦克风采集 + Edge-AI 推理 + 器械队列 |
+| `net_connect` | `src/net_connect_entry.c` | 以太网就绪后 UDP 状态上报 |
+| `wifi_debug` | `src/wifi_debug_entry.c` | WiFi AT 调试与配置 |
+| `log_task` | `src/log_task_entry.c` | 日志输出 |
+| `can_comms` | `src/can_comms_entry.c` | 历史遗留（当前不作为运控主链） |
 
 ---
 
-## Repository Structure
+## 运控主链
+
+当前实际生效链路：
+
+- **任务层**：`src/servo_bus_entry.c`
+- **状态机层**：`src/modules/motion_ctrl/`（示教/回放/空闲保持、夹爪与交接）
+- **轨迹层**：`src/modules/motion_ctrl/trajectory.c`
+- **驱动层**：`src/modules/servo/drv_servo.c`（串口舵机）
+- **触觉层**：`src/modules/touch/drv_touch.c` + `motion_ctrl` 内滤波/零偏/判定
+
+---
+
+## 仓库结构
 
 ```
 surgideliver/
-├── src/                        # Firmware source code
-│   ├── modules/                # Peripheral and algorithm modules
-│   │   ├── canfd/              # CAN-FD driver + RobStride protocol
-│   │   ├── ethernet/           # Ethernet / LwIP hooks
-│   │   ├── log/                # Logging subsystem
-│   │   ├── motion_ctrl/        # Trajectory, gravity comp, state machine
-│   │   ├── screen/             # Display, touch, LVGL UI
-│   │   ├── voice/              # Microphone driver + Edge-AI
-│   │   └── wifi/               # WiFi driver + NVM config
-│   ├── tools/                  # Shared utilities
-│   ├── edge-ai/                # Edge Impulse model integration
-│   ├── *_entry.c               # FreeRTOS task entry points
-│   └── hal_warmstart.c         # HAL warm-start hooks
-├── app/
-│   └── main.py                 # Desktop monitoring & debug console (Flet)
-├── graph/                      # Architecture diagrams (Mermaid)
-├── reference/                  # Reference datasheets (EL05.pdf)
-├── ra/                         # Renesas FSP generated HAL code
-├── ra_cfg/                     # FSP configuration files
-└── script/                     # Build / utility scripts
+├── src/                        # 业务与驱动源码（主要维护范围）
+│   ├── modules/
+│   │   ├── motion_ctrl/        # 运控状态机 + 轨迹
+│   │   ├── servo/              # 串口舵机驱动
+│   │   ├── touch/              # 触觉传感驱动
+│   │   ├── screen/             # 显示/触摸/LVGL UI（含第三方 LVGL）
+│   │   ├── wifi/               # WiFi AT + NVM
+│   │   ├── ethernet/           # 网络钩子
+│   │   ├── log/                # 日志子系统
+│   │   └── canfd/              # 历史遗留：CAN-FD 相关（当前非主链）
+│   ├── tools/                  # shared_data / packet_packer 等
+│   ├── edge-ai/                # Edge Impulse 模型集成
+│   └── *_entry.c               # FreeRTOS 任务入口
+├── app/                        # 桌面监控工具
+├── docs/                       # 文档/计划/架构图
+├── reference/                  # 参考资料
+├── test/                       # 测试脚本/数据/记录
+├── ra/                         # FSP HAL（自动生成）
+└── ra_cfg/                     # FSP 配置（自动生成）
 ```
 
 ---
 
-## Desktop Monitoring App
+## 桌面监控工具
 
-`app/main.py` is a Python desktop application (built with [Flet](https://flet.dev/)) that connects to the device over TCP and provides:
-
-- Real-time system status display
-- System configuration read / write
-- Motion group & frame configuration editor
-- Log page reader
-
-### Requirements
-
-- Python 3.10+
-- [Flet](https://flet.dev/) (`pip install flet`)
-
-### Running
-
-```bash
-cd app
-python main.py
-```
-
-Enter the device IP address in the app and click **连接设备** (Connect) to establish a connection.
+`app/main.py` 为 Python 桌面工具（Flet），用于连接设备并查看状态/配置与调试。
 
 ---
 
-## Build & Flash
+## 构建与烧录
 
-The firmware is developed with the **Renesas FSP (Flexible Software Package)** and **e² studio** IDE.
+本工程使用 Renesas FSP + e² studio 开发：
 
-1. Open the project in **e² studio**.
-2. Select the target build configuration (`sa Debug` or `surgideliver_arm Debug`).
-3. Build the project (**Project → Build**).
-4. Flash to the RA6M5 board via the J-Link debug probe (**Run → Debug**).
-
----
-
-## Author
-
-<a href="https://github.com/Codemzt">
-  <img src="https://github.com/Codemzt.png" width="100px;" alt="用户名"/>
-</a>
+1. 用 e² studio 打开工程
+2. 选择目标构建配置
+3. Build（Project → Build）
+4. 通过 J-Link 下载并调试（Run → Debug）

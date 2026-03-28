@@ -30,7 +30,7 @@ static volatile uint16_t g_fill_pos = 0;
 
 #define VOTE_WINDOW_SIZE    12
 #define VOTE_FORCEPS        35
-#define VOTE_HEMOSTAT       15
+#define VOTE_HEMOSTAT       20
 #define VOTE_SCALPEL        25
 #define LOG_READY_WAIT_SLICE_MS   10U
 #define LOG_READY_WAIT_MAX_MS   1000U
@@ -76,11 +76,6 @@ static int process_vote_window(int inference_result) {
             counts[curr_class] = (uint8_t)(counts[curr_class] + consecutive);
         }
 
-        LOG_D("Vote: class=%d, counts=[%d,%d,%d,%d,%d], window=%d/%d",
-               inference_result,
-               counts[0], counts[1], counts[2], counts[3], counts[4],
-               g_vote_count, VOTE_WINDOW_SIZE);
-
         if (g_vote_count >= VOTE_WINDOW_SIZE) {
             if (counts[1] >= VOTE_FORCEPS) final_result = 1;
             else if (counts[2] >= VOTE_HEMOSTAT) final_result = 2;
@@ -112,7 +107,7 @@ void voice_command_entry(void *pvParameters) {
         return;
     }
     ei_model_init();
-    LOG_D("Voice Command Thread Start.");
+    LOG_I("Voice command thread started");
     g_sys_status.is_mic_connected = true;
     R_BSP_IrqDisable(g_i2s0_cfg.rxi_irq);
 
@@ -135,7 +130,7 @@ void voice_command_entry(void *pvParameters) {
                           final_result,
                           ei_get_label_name(final_result));
 #else
-                    LOG_D("Add instrument %d to queue.", final_result);
+                    LOG_I("Add instrument %d to queue", final_result);
                     add_instrument((uint8_t)final_result);
                     update_queue_display();
 #endif

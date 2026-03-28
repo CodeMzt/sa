@@ -19,7 +19,7 @@ static void reset_teach_jog_cmd_with_stop(void) {
     uint8_t motor_id = hold.motor_id;
     teach_jog_hold_clear();
 
-    if (hold.active && is_motor_id_valid(motor_id)) {
+    if (hold.active && motor_id_is_valid(motor_id)) {
         (void)servo_stop_motor(motor_id, true);
     }
 }

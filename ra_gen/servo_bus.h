@@ -28,6 +28,12 @@ void sci_i2c4_master_callback(i2c_master_callback_args_t *p_args);
 extern const sci_i2c_extended_cfg_t g_i2c_touch_cfg_extend;
 extern sci_i2c_instance_ctrl_t g_i2c_touch_ctrl;
 /* Transfer on DTC Instance. */
+extern const transfer_instance_t g_transfer8;
+
+/** Access the DTC instance using these structures when calling API functions directly (::p_api is not used). */
+extern dtc_instance_ctrl_t g_transfer8_ctrl;
+extern const transfer_cfg_t g_transfer8_cfg;
+/* Transfer on DTC Instance. */
 extern const transfer_instance_t g_transfer5;
 
 /** Access the DTC instance using these structures when calling API functions directly (::p_api is not used). */

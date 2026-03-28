@@ -54,11 +54,51 @@ const i2c_master_cfg_t g_i2c_touch_cfg =
 #else
   .tei_irq = FSP_INVALID_VECTOR,
 #endif
-  .ipl = (12), /* (BSP_IRQ_DISABLED) is unused */
+  .ipl = (10), /* (BSP_IRQ_DISABLED) is unused */
   .p_extend = &g_i2c_touch_cfg_extend, };
 /* Instance structure to use this module. */
 const i2c_master_instance_t g_i2c_touch =
 { .p_ctrl = &g_i2c_touch_ctrl, .p_cfg = &g_i2c_touch_cfg, .p_api = &g_i2c_master_on_sci };
+dtc_instance_ctrl_t g_transfer8_ctrl;
+
+#if (1 == 1)
+transfer_info_t g_transfer8_info DTC_TRANSFER_INFO_ALIGNMENT =
+{ .transfer_settings_word_b.dest_addr_mode = TRANSFER_ADDR_MODE_INCREMENTED,
+  .transfer_settings_word_b.repeat_area = TRANSFER_REPEAT_AREA_DESTINATION,
+  .transfer_settings_word_b.irq = TRANSFER_IRQ_END,
+  .transfer_settings_word_b.chain_mode = TRANSFER_CHAIN_MODE_DISABLED,
+  .transfer_settings_word_b.src_addr_mode = TRANSFER_ADDR_MODE_FIXED,
+  .transfer_settings_word_b.size = TRANSFER_SIZE_1_BYTE,
+  .transfer_settings_word_b.mode = TRANSFER_MODE_NORMAL,
+  .p_dest = (void*) NULL,
+  .p_src = (void const*) NULL,
+  .num_blocks = (uint16_t) 0,
+  .length = (uint16_t) 0, };
+
+#elif (1 > 1)
+/* User is responsible to initialize the array. */
+transfer_info_t g_transfer8_info[1] DTC_TRANSFER_INFO_ALIGNMENT;
+#else
+/* User must call api::reconfigure before enable DTC transfer. */
+#endif
+
+const dtc_extended_cfg_t g_transfer8_cfg_extend =
+{ .activation_source = VECTOR_NUMBER_SCI9_RXI, };
+
+const transfer_cfg_t g_transfer8_cfg =
+{
+#if (1 == 1)
+  .p_info = &g_transfer8_info,
+#elif (1 > 1)
+    .p_info              = g_transfer8_info,
+#else
+    .p_info = NULL,
+#endif
+  .p_extend = &g_transfer8_cfg_extend, };
+
+/* Instance structure to use this module. */
+const transfer_instance_t g_transfer8 =
+{ .p_ctrl = &g_transfer8_ctrl, .p_cfg = &g_transfer8_cfg, .p_api = &g_transfer_on_dtc };
 dtc_instance_ctrl_t g_transfer5_ctrl;
 
 #if (1 == 1)
@@ -140,10 +180,10 @@ const uart_cfg_t g_uart_servo_cfg =
 #else
   .p_transfer_tx = &g_transfer5,
 #endif
-#if (RA_NOT_DEFINED == RA_NOT_DEFINED)
-  .p_transfer_rx = NULL,
+#if (RA_NOT_DEFINED == g_transfer8)
+                .p_transfer_rx       = NULL,
 #else
-                .p_transfer_rx       = &RA_NOT_DEFINED,
+  .p_transfer_rx = &g_transfer8,
 #endif
 #undef RA_NOT_DEFINED
   .rxi_ipl = (10),

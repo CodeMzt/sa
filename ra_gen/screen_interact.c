@@ -66,6 +66,34 @@ const i2c_master_cfg_t g_i2c_master2_cfg =
 const i2c_master_instance_t g_i2c_master2 =
 { .p_ctrl = &g_i2c_master2_ctrl, .p_cfg = &g_i2c_master2_cfg, .p_api = &g_i2c_master_on_iic };
 
+dmac_instance_ctrl_t g_transfer7_ctrl;
+transfer_info_t g_transfer7_info =
+{ .transfer_settings_word_b.dest_addr_mode = TRANSFER_ADDR_MODE_INCREMENTED,
+  .transfer_settings_word_b.repeat_area = TRANSFER_REPEAT_AREA_DESTINATION,
+  .transfer_settings_word_b.irq = TRANSFER_IRQ_END,
+  .transfer_settings_word_b.chain_mode = TRANSFER_CHAIN_MODE_DISABLED,
+  .transfer_settings_word_b.src_addr_mode = TRANSFER_ADDR_MODE_FIXED,
+  .transfer_settings_word_b.size = TRANSFER_SIZE_1_BYTE,
+  .transfer_settings_word_b.mode = TRANSFER_MODE_NORMAL,
+  .p_dest = (void*) NULL,
+  .p_src = (void const*) NULL,
+  .num_blocks = 0,
+  .length = 0, };
+const dmac_extended_cfg_t g_transfer7_extend =
+{ .offset = 1, .src_buffer_size = 1,
+#if defined(VECTOR_NUMBER_DMAC0_INT)
+    .irq                 = VECTOR_NUMBER_DMAC0_INT,
+#else
+  .irq = FSP_INVALID_VECTOR,
+#endif
+  .ipl = (10),
+  .channel = 0, .p_callback = g_spi1_rx_transfer_callback, .p_context = NULL, .activation_source = ELC_EVENT_SPI1_RXI, };
+const transfer_cfg_t g_transfer7_cfg =
+{ .p_info = &g_transfer7_info, .p_extend = &g_transfer7_extend, };
+/* Instance structure to use this module. */
+const transfer_instance_t g_transfer7 =
+{ .p_ctrl = &g_transfer7_ctrl, .p_cfg = &g_transfer7_cfg, .p_api = &g_transfer_on_dmac };
+
 dmac_instance_ctrl_t g_transfer1_ctrl;
 transfer_info_t g_transfer1_info =
 { .transfer_settings_word_b.dest_addr_mode = TRANSFER_ADDR_MODE_FIXED,
@@ -107,16 +135,16 @@ void g_spi1_tx_transfer_callback(dmac_callback_args_t *p_args)
 }
 #endif
 
-#if (RA_NOT_DEFINED) != (RA_NOT_DEFINED)
+#if (RA_NOT_DEFINED) != (1)
 
 /* If the transfer module is DMAC, define a DMAC transfer callback. */
 #include "r_dmac.h"
-extern void spi_rx_dmac_callback(spi_instance_ctrl_t const * const p_ctrl);
+extern void spi_rx_dmac_callback(spi_instance_ctrl_t const *const p_ctrl);
 
-void g_spi1_rx_transfer_callback (dmac_callback_args_t * p_args)
+void g_spi1_rx_transfer_callback(dmac_callback_args_t *p_args)
 {
-    FSP_PARAMETER_NOT_USED(p_args);
-    spi_rx_dmac_callback(&g_spi1_ctrl);
+    FSP_PARAMETER_NOT_USED (p_args);
+    spi_rx_dmac_callback (&g_spi1_ctrl);
 }
 #endif
 #undef RA_NOT_DEFINED
@@ -166,7 +194,7 @@ const spi_cfg_t g_spi1_cfg =
   .eri_irq = FSP_INVALID_VECTOR,
 #endif
 
-  .rxi_ipl = (12),
+  .rxi_ipl = (BSP_IRQ_DISABLED),
   .txi_ipl = (BSP_IRQ_DISABLED),
   .tei_ipl = (12),
   .eri_ipl = (12),

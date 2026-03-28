@@ -34,7 +34,7 @@ void net_connect_create(void)
                                      net_connect_func,
                                      (const char*) "net_connect", 0x3000 / 4, // In words, not bytes
                                      (void*) &net_connect_parameters, //pvParameters
-                                     1,
+                                     2,
 #if 1
                                      (StackType_t*) &net_connect_stack,
                                      (StaticTask_t*) &net_connect_memory

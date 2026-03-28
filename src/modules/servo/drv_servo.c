@@ -7,7 +7,7 @@
 /* -------------------------------------------------------------------------- */
 /* 当前有效底层驱动说明                                                        */
 /*                                                                            */
-/* 本文件已根据 `servo_bus_r.pdf` 修正为公共标准版串口舵机协议 v4.01：          */
+/* 本文件已根据 `reference/servo/servo-bus-r.pdf` 修正为公共标准版串口舵机协议 v4.01： */
 /* 1. 控制器下发帧头为 `FF FF`，应答帧头为 `FF F5`；                           */
 /* 2. 多字节数据统一按大端处理；                                               */
 /* 3. 关节位置控制使用 `0x2A/0x2C + 0x83`；                                    */
@@ -46,7 +46,7 @@
 #define SERVO_ADDR_CURRENT_SPEED     (0x3AU)
 #define SERVO_ADDR_CURRENT_TEMP      (0x3FU)
 
-/* servo_bus_r.pdf v4.01 section 2.4: response status byte bit definitions */
+/* reference/servo/servo-bus-r.pdf v4.01 section 2.4: response status byte bit definitions */
 #define SERVO_STATUS_VOLTAGE_ABNORMAL (1U << 0)
 #define SERVO_STATUS_TEMP_ABNORMAL    (1U << 2)
 #define SERVO_STATUS_OVERLOAD_STALL   (1U << 5)
@@ -84,27 +84,27 @@
 #define SERVO_POS_SPAN_CMD_F         ((float) (SERVO_POS_MAX_CMD - SERVO_POS_MIN_CMD))
 #define SERVO_POS_RANGE_DEG          (300.0f)
 #define SERVO_DEG_PER_CMD_F          (SERVO_POS_RANGE_DEG / SERVO_POS_SPAN_CMD_F)
-#define SERVO_GRIPPER_CLOSED_CMD     (2750U)
+#define SERVO_GRIPPER_CLOSED_CMD     (2600U)
 #define SERVO_GRIPPER_RELEASE_CMD    (2048U)
 /* 新协议中用 0x2E“当前电流(mA)”作为保护和显示的力矩代理量。 */
 #define SERVO_TORQUE_PROXY_SCALE_F   (1.0f)
 
-/* 当前串口运控只控制关节 1~4，ID5 在运行时链路中被显式跳过。 */
-static const uint8_t k_joint_ids[ROBSTRIDE_ACTIVE_JOINT_NUM] = {
-    ROBSTRIDE_MOTOR_ID_JOINT1,
-    ROBSTRIDE_MOTOR_ID_JOINT2,
-    ROBSTRIDE_MOTOR_ID_JOINT3,
-    ROBSTRIDE_MOTOR_ID_JOINT4,
-    ROBSTRIDE_MOTOR_ID_JOINT5
+/* 当前运行时控制关节 1~5。 */
+static const uint8_t k_joint_ids[MOTOR_ACTIVE_JOINT_NUM] = {
+    MOTOR_ID_JOINT1,
+    MOTOR_ID_JOINT2,
+    MOTOR_ID_JOINT3,
+    MOTOR_ID_JOINT4,
+    MOTOR_ID_JOINT5
 };
 
-static const uint8_t k_all_motor_ids[ROBSTRIDE_ACTIVE_MOTOR_NUM] = {
-    ROBSTRIDE_MOTOR_ID_JOINT1,
-    ROBSTRIDE_MOTOR_ID_JOINT2,
-    ROBSTRIDE_MOTOR_ID_JOINT3,
-    ROBSTRIDE_MOTOR_ID_JOINT4,
-    ROBSTRIDE_MOTOR_ID_JOINT5,
-    ROBSTRIDE_MOTOR_ID_GRIPPER
+static const uint8_t k_all_motor_ids[MOTOR_ACTIVE_MOTOR_NUM] = {
+    MOTOR_ID_JOINT1,
+    MOTOR_ID_JOINT2,
+    MOTOR_ID_JOINT3,
+    MOTOR_ID_JOINT4,
+    MOTOR_ID_JOINT5,
+    MOTOR_ID_GRIPPER
 };
 
 static SemaphoreHandle_t g_servo_mutex;
@@ -125,11 +125,11 @@ static uint8_t g_temp_refresh_index = 0U;
 static uint16_t g_gripper_torque_limit_cache = 0U;
 static bool g_gripper_torque_limit_valid = false;
 
-static float g_last_position_fb[ROBSTRIDE_MOTOR_NUM];
-static uint32_t g_last_position_tick[ROBSTRIDE_MOTOR_NUM];
-static bool g_position_fb_valid[ROBSTRIDE_MOTOR_NUM];
-static uint32_t g_last_joint_feedback_tick[ROBSTRIDE_ACTIVE_JOINT_NUM];
-static uint32_t g_last_sensor_trace_tick[ROBSTRIDE_MOTOR_NUM];
+static float g_last_position_fb[MOTOR_NUM];
+static uint32_t g_last_position_tick[MOTOR_NUM];
+static bool g_position_fb_valid[MOTOR_NUM];
+static uint32_t g_last_joint_feedback_tick[MOTOR_ACTIVE_JOINT_NUM];
+static uint32_t g_last_sensor_trace_tick[MOTOR_NUM];
 
 typedef enum {
     SERVO_REFRESH_MODE_FULL = 0,
@@ -161,12 +161,12 @@ static inline uint32_t servo_now_ticks(void) {
  * @brief 判断给定电机 ID 是否为当前控制的有效关节电机，并返回对应的关节索引
  */
 static inline bool servo_motor_is_active_joint(uint8_t motor_id, uint8_t *joint_index) {
-    if ((motor_id < ROBSTRIDE_MOTOR_ID_JOINT1) || (motor_id > ROBSTRIDE_MOTOR_ID_JOINT5)) {
+    if ((motor_id < MOTOR_ID_JOINT1) || (motor_id > MOTOR_ID_JOINT5)) {
         return false;
     }
 
     if (joint_index != NULL) {
-        *joint_index = (uint8_t) (motor_id - ROBSTRIDE_MOTOR_ID_JOINT1);
+        *joint_index = (uint8_t) (motor_id - MOTOR_ID_JOINT1);
     }
 
     return true;
@@ -574,12 +574,12 @@ static fsp_err_t servo_read_data_timeout_locked(uint8_t motor_id,
         return FSP_ERR_INVALID_DATA;
     }
 
-    uint8_t motor_index = get_motor_index(motor_id);
-    if (motor_index < ROBSTRIDE_MOTOR_NUM) {
-        /* servo_bus_r.pdf v4.01 section 2.4 defines this response byte as the
+    uint8_t motor_index = motor_get_index(motor_id);
+    if (motor_index < MOTOR_NUM) {
+        /* reference/servo/servo-bus-r.pdf v4.01 section 2.4 defines this response byte as the
          * serial servo status byte. Its meaning is not the same as the legacy
-         * CAN ROBSTRIDE_FAULT_* bitmap, so callers must not reuse the CAN
-         * fault-bit interpretation here.
+         * CAN fault bitmap, so callers must not reuse the legacy interpretation
+         * here.
          */
         g_motors[motor_index].feedback.fault_flags = rx_frame[4];
     }
@@ -640,7 +640,7 @@ static void servo_log_motor_diag_locked(uint8_t motor_id) {
     fsp_err_t lock_err = servo_read_data_locked(motor_id, SERVO_ADDR_LOCK_FLAG, lock_payload, sizeof(lock_payload));
     servo_inter_read_gap();
     fsp_err_t torque_err = servo_read_data_locked(motor_id, SERVO_ADDR_TORQUE_SWITCH, torque_payload, sizeof(torque_payload));
-    uint8_t motor_index = get_motor_index(motor_id);
+    uint8_t motor_index = motor_get_index(motor_id);
     uint16_t pos_cmd = 0U;
     uint16_t cur_raw = 0U;
     uint8_t temp_raw = 0U;
@@ -672,7 +672,7 @@ static void servo_log_motor_diag_locked(uint8_t motor_id) {
         torque_en = torque_payload[0];
     }
 
-    if (motor_index < ROBSTRIDE_MOTOR_NUM) {
+    if (motor_index < MOTOR_NUM) {
         cached_pos_deg = g_motors[motor_index].feedback.position * RAD2DEG_F;
         cur_proxy = g_motors[motor_index].feedback.torque;
         temp_c = g_motors[motor_index].feedback.temperature;
@@ -708,8 +708,8 @@ static void servo_log_sensor_timeout_trace_locked(uint8_t motor_id,
                                                   uint8_t adr,
                                                   uint8_t payload_len,
                                                   uint32_t timeout_ms) {
-    uint8_t motor_index = get_motor_index(motor_id);
-    if (motor_index >= ROBSTRIDE_MOTOR_NUM) {
+    uint8_t motor_index = motor_get_index(motor_id);
+    if (motor_index >= MOTOR_NUM) {
         return;
     }
 
@@ -772,14 +772,14 @@ static fsp_err_t servo_write_target_locked(uint8_t motor_id, uint16_t pos_cmd, u
 }
 
 static fsp_err_t servo_lock_joint_current_locked(uint8_t motor_id) {
-    if (!is_joint_motor_id(motor_id)) {
+    if (!motor_id_is_joint(motor_id)) {
         return FSP_ERR_INVALID_ARGUMENT;
     }
 
     fsp_err_t err = servo_write_u8_locked(motor_id, SERVO_ADDR_TORQUE_SWITCH, SERVO_TORQUE_ON);
     if (err == FSP_SUCCESS) {
         err = servo_write_target_locked(motor_id,
-                                        (uint16_t) servo_rad_to_cmd(g_motors[get_motor_index(motor_id)].feedback.position),
+                                        (uint16_t) servo_rad_to_cmd(g_motors[motor_get_index(motor_id)].feedback.position),
                                         0U);
     }
     if (err == FSP_SUCCESS) {
@@ -790,7 +790,15 @@ static fsp_err_t servo_lock_joint_current_locked(uint8_t motor_id) {
 }
 
 static fsp_err_t servo_prepare_gripper_locked(void) {
-    return FSP_SUCCESS;
+    fsp_err_t err = servo_write_u8_locked(MOTOR_ID_GRIPPER,
+                                          SERVO_ADDR_TORQUE_SWITCH,
+                                          SERVO_TORQUE_ON);
+    if (err == FSP_SUCCESS) {
+        err = servo_write_u8_locked(MOTOR_ID_GRIPPER,
+                                    SERVO_ADDR_LOCK_FLAG,
+                                    SERVO_LOCK_OFF);
+    }
+    return err;
 }
 
 static fsp_err_t servo_set_gripper_torque_limit_locked(uint16_t torque_limit) {
@@ -800,7 +808,7 @@ static fsp_err_t servo_set_gripper_torque_limit_locked(uint16_t torque_limit) {
         return FSP_SUCCESS;
     }
 
-    fsp_err_t err = servo_write_u16_locked(ROBSTRIDE_MOTOR_ID_GRIPPER,
+    fsp_err_t err = servo_write_u16_locked(MOTOR_ID_GRIPPER,
                                            SERVO_ADDR_MAX_TORQUE,
                                            clamped);
     if (err == FSP_SUCCESS) {
@@ -817,7 +825,7 @@ static fsp_err_t servo_move_gripper_cmd_locked(uint16_t target_cmd, uint16_t tor
         err = servo_set_gripper_torque_limit_locked(torque_limit);
     }
     if (err == FSP_SUCCESS) {
-        err = servo_write_target_locked(ROBSTRIDE_MOTOR_ID_GRIPPER,
+        err = servo_write_target_locked(MOTOR_ID_GRIPPER,
                                         servo_gripper_clamp_target_cmd((int32_t) target_cmd),
                                         SERVO_GRIPPER_MOVE_TIME_MS);
     }
@@ -848,8 +856,8 @@ static fsp_err_t servo_refresh_single_motor_locked(uint8_t motor_id, bool read_c
         return err;
     }
 
-    uint8_t motor_index = get_motor_index(motor_id);
-    if (motor_index >= ROBSTRIDE_MOTOR_NUM) {
+    uint8_t motor_index = motor_get_index(motor_id);
+    if (motor_index >= MOTOR_NUM) {
         return FSP_ERR_NOT_FOUND;
     }
 
@@ -918,7 +926,7 @@ static fsp_err_t servo_refresh_feedback_locked(servo_refresh_mode_t mode) {
                       (initial_sample || ((g_feedback_cycle % SERVO_TEMP_REFRESH_DIV) == 0U));
     uint8_t current_index = g_current_refresh_index;
     uint8_t temp_index = g_temp_refresh_index;
-    uint8_t motor_count = refresh_full ? ROBSTRIDE_ACTIVE_MOTOR_NUM : ROBSTRIDE_ACTIVE_JOINT_NUM;
+    uint8_t motor_count = refresh_full ? MOTOR_ACTIVE_MOTOR_NUM : MOTOR_ACTIVE_JOINT_NUM;
 
     for (uint8_t i = 0U; i < motor_count; ++i) {
         bool read_current = refresh_full && (initial_sample || (current_cycle && (i == current_index)));
@@ -931,11 +939,11 @@ static fsp_err_t servo_refresh_feedback_locked(servo_refresh_mode_t mode) {
     }
 
     if (refresh_full && !initial_sample && current_cycle) {
-        g_current_refresh_index = (uint8_t) ((g_current_refresh_index + 1U) % ROBSTRIDE_ACTIVE_MOTOR_NUM);
+        g_current_refresh_index = (uint8_t) ((g_current_refresh_index + 1U) % MOTOR_ACTIVE_MOTOR_NUM);
     }
 
     if (refresh_full && !initial_sample && temp_cycle) {
-        g_temp_refresh_index = (uint8_t) ((g_temp_refresh_index + 1U) % ROBSTRIDE_ACTIVE_MOTOR_NUM);
+        g_temp_refresh_index = (uint8_t) ((g_temp_refresh_index + 1U) % MOTOR_ACTIVE_MOTOR_NUM);
     }
 
     g_last_feedback_tick = servo_now_ticks();
@@ -1030,7 +1038,7 @@ bool servo_init(void) {
     vTaskDelay(pdMS_TO_TICKS(SERVO_INIT_SETTLE_MS));
 
     bool ok = true;
-    for (uint8_t i = 0U; i < ROBSTRIDE_ACTIVE_MOTOR_NUM; ++i) {
+    for (uint8_t i = 0U; i < MOTOR_ACTIVE_MOTOR_NUM; ++i) {
         err = servo_probe_motor_retry_locked(k_all_motor_ids[i]);
         if (err != FSP_SUCCESS) {
             LOG_E("Servo[%u] probe failed: %d", k_all_motor_ids[i], err);
@@ -1040,7 +1048,7 @@ bool servo_init(void) {
     }
 
     if (ok) {
-        for (uint8_t i = 0U; i < ROBSTRIDE_ACTIVE_JOINT_NUM; ++i) {
+        for (uint8_t i = 0U; i < MOTOR_ACTIVE_JOINT_NUM; ++i) {
             err = servo_prepare_joint_runtime_locked(k_joint_ids[i]);
             if (err != FSP_SUCCESS) {
                 LOG_E("Servo[%u] runtime prepare failed: %d", k_joint_ids[i], err);
@@ -1101,8 +1109,8 @@ fsp_err_t servo_refresh_joint_feedback(void) {
     return servo_refresh_runtime(SERVO_REFRESH_MODE_JOINTS_ONLY);
 }
 
-fsp_err_t servo_write_joint_positions(const float q_target[ROBSTRIDE_ACTIVE_JOINT_NUM]) {
-    uint8_t params[1U + ROBSTRIDE_ACTIVE_JOINT_NUM * 5U];
+fsp_err_t servo_write_joint_positions(const float q_target[MOTOR_ACTIVE_JOINT_NUM]) {
+    uint8_t params[1U + MOTOR_ACTIVE_JOINT_NUM * 5U];
     uint8_t frame[SERVO_FRAME_MAX_SIZE];
     uint8_t offset = 0U;
 
@@ -1110,8 +1118,8 @@ fsp_err_t servo_write_joint_positions(const float q_target[ROBSTRIDE_ACTIVE_JOIN
     fsp_err_t err = servo_take_lock(20U);
     if (err != FSP_SUCCESS) return err;
 
-    params[offset++] = ROBSTRIDE_ACTIVE_JOINT_NUM;
-    for (uint8_t i = 0U; i < ROBSTRIDE_ACTIVE_JOINT_NUM; ++i) {
+    params[offset++] = MOTOR_ACTIVE_JOINT_NUM;
+    for (uint8_t i = 0U; i < MOTOR_ACTIVE_JOINT_NUM; ++i) {
         uint16_t pos_cmd = (uint16_t) servo_rad_to_cmd(q_target[i]);
         params[offset++] = k_joint_ids[i];
         params[offset++] = (uint8_t) ((pos_cmd >> 8) & 0xFFU);
@@ -1138,7 +1146,7 @@ fsp_err_t servo_hold_joint_current(void) {
     if (err != FSP_SUCCESS) return err;
 
     err = FSP_SUCCESS;
-    for (uint8_t i = 0U; i < ROBSTRIDE_ACTIVE_JOINT_NUM; ++i) {
+    for (uint8_t i = 0U; i < MOTOR_ACTIVE_JOINT_NUM; ++i) {
         err = servo_lock_joint_current_locked(k_joint_ids[i]);
         if (err != FSP_SUCCESS) {
             break;
@@ -1150,7 +1158,7 @@ fsp_err_t servo_hold_joint_current(void) {
 }
 
 fsp_err_t servo_set_joint_servo_mode(uint8_t motor_id) {
-    if (!is_joint_motor_id(motor_id)) return FSP_ERR_INVALID_ARGUMENT;
+    if (!motor_id_is_joint(motor_id)) return FSP_ERR_INVALID_ARGUMENT;
     fsp_err_t err = servo_take_lock(20U);
     if (err != FSP_SUCCESS) return err;
 
@@ -1160,7 +1168,7 @@ fsp_err_t servo_set_joint_servo_mode(uint8_t motor_id) {
 }
 
 fsp_err_t servo_lock_joint_current(uint8_t motor_id) {
-    if (!is_joint_motor_id(motor_id)) return FSP_ERR_INVALID_ARGUMENT;
+    if (!motor_id_is_joint(motor_id)) return FSP_ERR_INVALID_ARGUMENT;
     fsp_err_t err = servo_take_lock(20U);
     if (err != FSP_SUCCESS) return err;
 
@@ -1170,7 +1178,7 @@ fsp_err_t servo_lock_joint_current(uint8_t motor_id) {
 }
 
 fsp_err_t servo_unlock_joint(uint8_t motor_id) {
-    if (!is_joint_motor_id(motor_id)) return FSP_ERR_INVALID_ARGUMENT;
+    if (!motor_id_is_joint(motor_id)) return FSP_ERR_INVALID_ARGUMENT;
     fsp_err_t err = servo_take_lock(20U);
     if (err != FSP_SUCCESS) return err;
 
@@ -1184,18 +1192,18 @@ fsp_err_t servo_unlock_joint(uint8_t motor_id) {
 }
 
 fsp_err_t servo_stop_motor(uint8_t motor_id, bool hold_position) {
-    if (!is_motor_id_valid(motor_id)) return FSP_ERR_INVALID_ARGUMENT;
+    if (!motor_id_is_valid(motor_id)) return FSP_ERR_INVALID_ARGUMENT;
     fsp_err_t err = servo_take_lock(20U);
     if (err != FSP_SUCCESS) return err;
 
-    if (motor_id == ROBSTRIDE_MOTOR_ID_GRIPPER) {
+    if (motor_id == MOTOR_ID_GRIPPER) {
         err = servo_write_u8_locked(motor_id, SERVO_ADDR_LOCK_FLAG, SERVO_LOCK_OFF);
         if (err == FSP_SUCCESS) {
             err = servo_write_u8_locked(motor_id, SERVO_ADDR_TORQUE_SWITCH, hold_position ? SERVO_TORQUE_ON : SERVO_TORQUE_OFF);
         }
         if (err == FSP_SUCCESS && hold_position) {
             err = servo_write_target_locked(motor_id,
-                                            (uint16_t) servo_rad_to_cmd(g_motors[get_motor_index(motor_id)].feedback.position),
+                                            (uint16_t) servo_rad_to_cmd(g_motors[motor_get_index(motor_id)].feedback.position),
                                             0U);
         }
     } else if (hold_position) {
@@ -1213,7 +1221,7 @@ fsp_err_t servo_stop_motor(uint8_t motor_id, bool hold_position) {
 
 fsp_err_t servo_set_zero(uint8_t motor_id) {
     (void) motor_id;
-    LOG_W("servo_set_zero is not supported by servo_bus_r.pdf standard protocol");
+    LOG_W("servo_set_zero is not supported by servo-bus-r.pdf standard protocol");
     return FSP_ERR_ABORTED;
 }
 
@@ -1239,7 +1247,7 @@ fsp_err_t servo_gripper_stop(void) {
 
 uint16_t servo_gripper_feedback_cmd(void) {
     return servo_gripper_clamp_target_cmd((int32_t) servo_rad_to_cmd(
-        g_motors[get_motor_index(ROBSTRIDE_MOTOR_ID_GRIPPER)].feedback.position));
+        g_motors[motor_get_index(MOTOR_ID_GRIPPER)].feedback.position));
 }
 
 fsp_err_t servo_gripper_move_to_cmd(int32_t target_cmd, uint16_t *applied_cmd) {
@@ -1272,7 +1280,7 @@ void servo_log_link_diagnostics(void) {
     }
 
     LOG_W("Servo link diagnostics begin");
-    for (uint8_t i = 0U; i < ROBSTRIDE_ACTIVE_MOTOR_NUM; ++i) {
+    for (uint8_t i = 0U; i < MOTOR_ACTIVE_MOTOR_NUM; ++i) {
         servo_log_motor_diag_locked(k_all_motor_ids[i]);
     }
     LOG_W("Servo link diagnostics end");
@@ -1283,7 +1291,7 @@ void servo_log_link_diagnostics(void) {
 void servo_link_check(void) {
     bool have_joint_feedback = false;
 
-    for (uint8_t i = 0U; i < ROBSTRIDE_ACTIVE_JOINT_NUM; ++i) {
+    for (uint8_t i = 0U; i < MOTOR_ACTIVE_JOINT_NUM; ++i) {
         if (g_last_joint_feedback_tick[i] != 0U) {
             have_joint_feedback = true;
             break;

@@ -9,12 +9,12 @@
 #include "motion_ctrl.h"
 
 static const uint8_t k_uploaded_motor_ids[MOTOR_PACKET_MOTOR_COUNT] = {
-    ROBSTRIDE_MOTOR_ID_JOINT1,
-    ROBSTRIDE_MOTOR_ID_JOINT2,
-    ROBSTRIDE_MOTOR_ID_JOINT3,
-    ROBSTRIDE_MOTOR_ID_JOINT4,
-    ROBSTRIDE_MOTOR_ID_JOINT5,
-    ROBSTRIDE_MOTOR_ID_GRIPPER
+    MOTOR_ID_JOINT1,
+    MOTOR_ID_JOINT2,
+    MOTOR_ID_JOINT3,
+    MOTOR_ID_JOINT4,
+    MOTOR_ID_JOINT5,
+    MOTOR_ID_GRIPPER
 };
 
 /**
@@ -31,9 +31,9 @@ void pack_motor_data(uint8_t *out_buf) {
 
     /* 从 g_motors 数组提取角度和力矩数据 */
     for (int i = 0; i < (int) MOTOR_PACKET_MOTOR_COUNT; i++) {
-        uint8_t motor_index = get_motor_index(k_uploaded_motor_ids[i]);
-        if (motor_index < ROBSTRIDE_MOTOR_NUM) {
-            bool use_joint_target = use_playback_targets && (i < (int) ROBSTRIDE_ACTIVE_JOINT_NUM);
+        uint8_t motor_index = motor_get_index(k_uploaded_motor_ids[i]);
+        if (motor_index < MOTOR_NUM) {
+            bool use_joint_target = use_playback_targets && (i < (int) MOTOR_ACTIVE_JOINT_NUM);
             pkt.angles[i] = use_joint_target ? g_motion_ctrl.playback_upload_q[i]
                                              : g_motors[motor_index].feedback.position;
             pkt.torques[i] = g_motors[motor_index].feedback.torque;

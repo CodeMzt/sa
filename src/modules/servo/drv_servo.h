@@ -8,7 +8,7 @@
 #define DRV_SERVO_H_
 
 #include "servo_bus.h"
-#include "robstride_motor.h"
+#include "motor_state.h"
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -53,7 +53,7 @@ fsp_err_t servo_refresh_joint_feedback(void);
  * @param q_target 4 个关节的目标角度，单位 rad
  * @return FSP_SUCCESS 成功
  */
-fsp_err_t servo_write_joint_positions(const float q_target[ROBSTRIDE_ACTIVE_JOINT_NUM]);
+fsp_err_t servo_write_joint_positions(const float q_target[MOTOR_ACTIVE_JOINT_NUM]);
 
 /**
  * @brief 将全部关节锁舵在当前反馈位置

@@ -21,9 +21,10 @@
 /* Private Variables                                                          */
 /* -------------------------------------------------------------------------- */
 
-/* 定义两个静态显存缓冲区 */
-static lv_color_t g_disp_buf_1[DISP_BUF_SIZE];
-static lv_color_t g_disp_buf_2[DISP_BUF_SIZE];
+#define SRAM1_BUFFER __attribute__((section(".sram1_buffer")))
+
+static lv_color_t g_disp_buf_1[DISP_BUF_SIZE] SRAM1_BUFFER;
+static lv_color_t g_disp_buf_2[DISP_BUF_SIZE] SRAM1_BUFFER;
 
 /* -------------------------------------------------------------------------- */
 /* Private Function Prototypes                                                */

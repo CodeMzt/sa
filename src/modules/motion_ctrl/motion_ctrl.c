@@ -39,6 +39,12 @@
 #define GRIPPER_HOLD_KEEPALIVE_S     (0.25f) // 夹爪保持状态下的心跳信号周期，用于维持夹爪的保持状态
 #define GRIPPER_NO_TOUCH_PAUSE_S     (1.0f) // 在没有触觉反馈的情况下持续施加夹爪动作命令的最大时间，超过该时间后即使没有力矩反馈也强制停止夹爪动作，避免长时间施加过大力矩导致损伤；同时配合触觉交接监控逻辑，在检测到触觉不可用后也会提前停止夹爪动作
 #define TOUCH_DISABLE_ERR_COUNT      (3U)
+#define TOUCH_LOG_INTERVAL_S         (0.20f)
+#define TOUCH_RESIDENT_LOG_INTERVAL_S (0.50f)
+#define TOUCH_GRASP_FN_THRESHOLD     (80.0f)
+#define TOUCH_GRASP_FT_THRESHOLD_SQ  (400.0f)
+#define TOUCH_RELEASE_FN_THRESHOLD   (10.0f)
+#define TOUCH_RELEASE_FT_THRESHOLD_SQ (25.0f)
 
 #define TOUCH_FILTER_ALPHA           (0.25f) // 触觉传感器数据滤波系数，较小的值可以获得更平滑的力反馈，但响应会更慢；需要根据实际传感器的噪声特性和控制周期进行调整
 #define TOUCH_BIAS_TRACK_ALPHA       (0.05f) // 触觉零偏在线跟踪的滤波系数，较小的值可以更平滑地跟踪零偏变化，但响应会更慢；需要根据实际传感器的稳定性和环境变化情况进行调整
@@ -82,19 +88,22 @@ typedef struct {
 
 static touch_handoff_runtime_t s_touch_handoff = {0};
 static bool s_touch_monitor_enabled = false;
+static float s_touch_resident_log_timer = 0.0f;
 
 static void set_gripper_hold_state(motion_controller_t *ctrl, gripper_hold_state_t state);
 static bool unlock_all_joints(void);
 static void refresh_joint_feedback_best_effort(const char *reason);
 static void log_gripper_cmd_error(const char *op, fsp_err_t err);
+static bool update_gripper_touch_wait(motion_controller_t *ctrl, float dt);
+static void release_all_motors_zero_force_best_effort(void);
 
 /* 当前运行时控制关节 1~5。 */
-static const uint8_t k_joint_ids[ROBSTRIDE_ACTIVE_JOINT_NUM] = {
-    ROBSTRIDE_MOTOR_ID_JOINT1,
-    ROBSTRIDE_MOTOR_ID_JOINT2,
-    ROBSTRIDE_MOTOR_ID_JOINT3,
-    ROBSTRIDE_MOTOR_ID_JOINT4,
-    ROBSTRIDE_MOTOR_ID_JOINT5
+static const uint8_t k_joint_ids[MOTOR_ACTIVE_JOINT_NUM] = {
+    MOTOR_ID_JOINT1,
+    MOTOR_ID_JOINT2,
+    MOTOR_ID_JOINT3,
+    MOTOR_ID_JOINT4,
+    MOTOR_ID_JOINT5
 };
 
 static const motion_ctrl_config_t DEFAULT_CONFIG = {
@@ -153,6 +162,20 @@ static uint16_t get_gripper_current_limit_ma(void) {
  */
 static inline float vec2_norm_sq(float x, float y) {
     return (x * x) + (y * y);
+}
+
+static void clear_gripper_touch_wait(motion_controller_t *ctrl) {
+    if (ctrl == NULL) return;
+
+    ctrl->gripper_touch_wait_state = GRIPPER_TOUCH_WAIT_NONE;
+    ctrl->gripper_touch_wait_log_timer = 0.0f;
+}
+
+static void arm_gripper_touch_wait(motion_controller_t *ctrl, gripper_touch_wait_state_t wait_state) {
+    if (ctrl == NULL) return;
+
+    ctrl->gripper_touch_wait_state = wait_state;
+    ctrl->gripper_touch_wait_log_timer = TOUCH_LOG_INTERVAL_S;
 }
 
 /**
@@ -275,13 +298,39 @@ static void reset_handoff_wait_internal(motion_controller_t *ctrl) {
 
     ctrl->handoff_state = HANDOFF_IDLE;
     ctrl->handoff_release_stop_timer = 0.0f;
+    clear_gripper_touch_wait(ctrl);
     reset_touch_handoff_runtime(true);
 }
 
 /**
  * @brief 轮询触觉交接监控逻辑
  */
-static void update_touch_handoff(motion_controller_t *ctrl) {
+static void log_touch_resident_sample(float dt, const char *tag) {
+    float tx = 0.0f;
+    float ty = 0.0f;
+    float tz = 0.0f;
+
+    s_touch_resident_log_timer += dt;
+    if (s_touch_resident_log_timer < TOUCH_RESIDENT_LOG_INTERVAL_S) {
+        return;
+    }
+
+    touch_get_centered_force(&tx, &ty, &tz);
+    LOG_I("Touch alive[%s]: raw=(%.1f, %.1f, %.1f) filt=(%.1f, %.1f, %.1f) centered=(%.1f, %.1f, %.1f)",
+          tag,
+          s_touch_handoff.raw_fx,
+          s_touch_handoff.raw_fy,
+          s_touch_handoff.raw_fz,
+          s_touch_handoff.filt_fx,
+          s_touch_handoff.filt_fy,
+          s_touch_handoff.filt_fz,
+          tx,
+          ty,
+          tz);
+    s_touch_resident_log_timer = 0.0f;
+}
+
+static void update_touch_handoff(motion_controller_t *ctrl, float dt) {
     float tx = 0.0f;
     float ty = 0.0f;
     float tz = 0.0f;
@@ -291,6 +340,11 @@ static void update_touch_handoff(motion_controller_t *ctrl) {
     if (ctrl == NULL) return;
 
     if (!touch_monitor_enabled()) {
+        s_touch_resident_log_timer += dt;
+        if (s_touch_resident_log_timer >= TOUCH_RESIDENT_LOG_INTERVAL_S) {
+            LOG_W("Touch alive[disabled]: monitor disabled");
+            s_touch_resident_log_timer = 0.0f;
+        }
         if (ctrl->handoff_state != HANDOFF_IDLE) {
             ctrl->handoff_state = HANDOFF_DONE;
             LOG_W("Touch unavailable, bypass handoff wait");
@@ -301,6 +355,11 @@ static void update_touch_handoff(motion_controller_t *ctrl) {
     if (ctrl->handoff_state == HANDOFF_IDLE) {
         if (ctrl->gripper_hold_state == GRIPPER_HOLD_IDLE) {
             touch_update_bias();
+            if (touch_monitor_enabled() && s_touch_handoff.filter_valid) {
+                log_touch_resident_sample(dt, "idle");
+            }
+        } else if (touch_refresh_filtered_sample()) {
+            log_touch_resident_sample(dt, "hold");
         }
         return;
     }
@@ -389,8 +448,8 @@ static void update_touch_handoff(motion_controller_t *ctrl) {
     }
 
     if (ctrl->handoff_state == HANDOFF_RELEASE_ACTIVE) {
-        float ref_ft_sq = vec2_norm_sq(s_touch_handoff.ref_tx, s_touch_handoff.ref_ty);
-        bool touch_quiet = (ref_ft_sq > 0.0f) && (ft_sq <= (ref_ft_sq * HANDOFF_FT_RELEASE_RATIO_SQ));
+        bool touch_quiet = (fn < TOUCH_RELEASE_FN_THRESHOLD) &&
+                           (ft_sq < TOUCH_RELEASE_FT_THRESHOLD_SQ);
         if (touch_quiet) {
             if (s_touch_handoff.settle_cycles < UINT8_MAX) {
                 s_touch_handoff.settle_cycles++;
@@ -416,7 +475,7 @@ static void get_joint_limit_rad(uint8_t joint_index, float *q_min, float *q_max)
     float max_deg = JOINT_LIMIT_DEFAULT_MAX_DEG;
     const sys_config_t *sys_cfg = nvm_get_sys_config();
 
-    if ((sys_cfg != NULL) && (joint_index < ROBSTRIDE_JOINT_NUM)) {
+    if ((sys_cfg != NULL) && (joint_index < MOTOR_JOINT_NUM)) {
         min_deg = (float) sys_cfg->angle_min[joint_index] * 0.01f;
         max_deg = (float) sys_cfg->angle_max[joint_index] * 0.01f;
     }
@@ -439,11 +498,11 @@ static void get_joint_limit_rad(uint8_t joint_index, float *q_min, float *q_max)
  * @brief 对关节命令应用新的 NVM 软件限幅
  */
 static float clamp_joint_position_to_nvm(uint8_t motor_id, float position_cmd) {
-    if (!is_joint_motor_id(motor_id)) {
+    if (!motor_id_is_joint(motor_id)) {
         return position_cmd;
     }
 
-    uint8_t joint_index = (uint8_t) (motor_id - ROBSTRIDE_MOTOR_ID_JOINT1);
+    uint8_t joint_index = (uint8_t) (motor_id - MOTOR_ID_JOINT1);
     float q_min = 0.0f;
     float q_max = 0.0f;
     get_joint_limit_rad(joint_index, &q_min, &q_max);
@@ -462,10 +521,10 @@ static void reset_torque_protection_state(motion_controller_t *ctrl) {
 /**
  * @brief 读取指定电机的最新缓存位置反馈
  */
-static const robstride_feedback_t *get_motor_feedback(uint8_t motor_id) {
-    static const robstride_feedback_t k_empty_feedback = {0};
-    uint8_t motor_index = get_motor_index(motor_id);
-    return (motor_index < ROBSTRIDE_MOTOR_NUM) ? &g_motors[motor_index].feedback : &k_empty_feedback;
+static const motor_feedback_t *get_motor_feedback(uint8_t motor_id) {
+    static const motor_feedback_t k_empty_feedback = {0};
+    uint8_t motor_index = motor_get_index(motor_id);
+    return (motor_index < MOTOR_NUM) ? &g_motors[motor_index].feedback : &k_empty_feedback;
 }
 
 static void clear_playback_upload_state(motion_controller_t *ctrl) {
@@ -476,7 +535,7 @@ static void clear_playback_upload_state(motion_controller_t *ctrl) {
 }
 
 static void update_playback_upload_state(motion_controller_t *ctrl,
-                                         const float q_target[ROBSTRIDE_ACTIVE_JOINT_NUM]) {
+                                         const float q_target[MOTOR_ACTIVE_JOINT_NUM]) {
     if ((ctrl == NULL) || (q_target == NULL)) return;
 
     memcpy(ctrl->playback_upload_q, q_target, sizeof(ctrl->playback_upload_q));
@@ -486,10 +545,10 @@ static void update_playback_upload_state(motion_controller_t *ctrl,
 /**
  * @brief 读取指定电机的最新缓存速度反馈
  */
-static void read_joint_pose(float q[ROBSTRIDE_ACTIVE_JOINT_NUM]) {
+static void read_joint_pose(float q[MOTOR_ACTIVE_JOINT_NUM]) {
     if (q == NULL) return;
 
-    for (uint8_t i = 0U; i < ROBSTRIDE_ACTIVE_JOINT_NUM; ++i) {
+    for (uint8_t i = 0U; i < MOTOR_ACTIVE_JOINT_NUM; ++i) {
         q[i] = clamp_joint_position_to_nvm(k_joint_ids[i], get_motor_feedback(k_joint_ids[i])->position);
     }
 }
@@ -603,8 +662,8 @@ static void position_limit(uint8_t motor_id, float *position_cmd, float *velocit
 
     float q_cmd = clamp_joint_position_to_nvm(motor_id, *position_cmd);
 
-    if (is_joint_motor_id(motor_id)) {
-        uint8_t joint_index = (uint8_t) (motor_id - ROBSTRIDE_MOTOR_ID_JOINT1);
+    if (motor_id_is_joint(motor_id)) {
+        uint8_t joint_index = (uint8_t) (motor_id - MOTOR_ID_JOINT1);
         float q_min = 0.0f;
         float q_max = 0.0f;
         get_joint_limit_rad(joint_index, &q_min, &q_max);
@@ -622,23 +681,23 @@ static void position_limit(uint8_t motor_id, float *position_cmd, float *velocit
  * @brief 更新上层兼容保留的 kp/kd 参数
  */
 static void motion_ctrl_set_common_pd(motion_controller_t *ctrl,
-                                      const float kp[ROBSTRIDE_JOINT_NUM],
-                                      const float kd[ROBSTRIDE_JOINT_NUM]) {
+                                      const float kp[MOTOR_JOINT_NUM],
+                                      const float kd[MOTOR_JOINT_NUM]) {
     if (ctrl == NULL) return;
 
-    if (kp != NULL) memcpy(ctrl->config.controller.kp, kp, ROBSTRIDE_JOINT_NUM * sizeof(float));
-    if (kd != NULL) memcpy(ctrl->config.controller.kd, kd, ROBSTRIDE_JOINT_NUM * sizeof(float));
+    if (kp != NULL) memcpy(ctrl->config.controller.kp, kp, MOTOR_JOINT_NUM * sizeof(float));
+    if (kd != NULL) memcpy(ctrl->config.controller.kd, kd, MOTOR_JOINT_NUM * sizeof(float));
 }
 
 /**
  * @brief 通过串口舵机后端下发四个关节的位置目标
  */
-static bool send_joint_position_targets(const float q_target[ROBSTRIDE_ACTIVE_JOINT_NUM]) {
-    float q_cmd[ROBSTRIDE_ACTIVE_JOINT_NUM];
+static bool send_joint_position_targets(const float q_target[MOTOR_ACTIVE_JOINT_NUM]) {
+    float q_cmd[MOTOR_ACTIVE_JOINT_NUM];
 
     if (q_target == NULL) return false;
 
-    for (uint8_t i = 0U; i < ROBSTRIDE_ACTIVE_JOINT_NUM; ++i) {
+    for (uint8_t i = 0U; i < MOTOR_ACTIVE_JOINT_NUM; ++i) {
         q_cmd[i] = clamp_joint_position_to_nvm(k_joint_ids[i], q_target[i]);
     }
 
@@ -649,7 +708,7 @@ static bool send_joint_position_targets(const float q_target[ROBSTRIDE_ACTIVE_JO
  * @brief 统一解除关节 1~4 的锁舵扭矩
  */
 static bool unlock_all_joints(void) {
-    for (uint8_t i = 0U; i < ROBSTRIDE_ACTIVE_JOINT_NUM; ++i) {
+    for (uint8_t i = 0U; i < MOTOR_ACTIVE_JOINT_NUM; ++i) {
         if (servo_unlock_joint(k_joint_ids[i]) != FSP_SUCCESS) {
             LOG_E("Failed to unlock joint %u", (unsigned int) (i + 1U));
             return false;
@@ -657,6 +716,16 @@ static bool unlock_all_joints(void) {
     }
 
     return true;
+}
+
+static void release_all_motors_zero_force_best_effort(void) {
+    if (!unlock_all_joints()) {
+        LOG_W("Failed to release joint torques while entering zero-force mode");
+    }
+
+    if (servo_stop_motor(MOTOR_ID_GRIPPER, false) != FSP_SUCCESS) {
+        LOG_W("Failed to release gripper torque while entering zero-force mode");
+    }
 }
 
 /**
@@ -710,9 +779,88 @@ static void log_gripper_cmd_error(const char *op, fsp_err_t err) {
 }
 
 static void arm_gripper_action_pause_if_needed(motion_controller_t *ctrl, uint8_t action) {
-    if ((ctrl == NULL) || touch_monitor_enabled()) return;
     if ((action != ACTION_GRIP) && (action != ACTION_RELEASE)) return;
+    if (ctrl == NULL) return;
+
+    if (touch_monitor_enabled()) {
+        arm_gripper_touch_wait(ctrl,
+                               (action == ACTION_GRIP)
+                               ? GRIPPER_TOUCH_WAIT_GRIP
+                               : GRIPPER_TOUCH_WAIT_RELEASE);
+        return;
+    }
+
     ctrl->gripper_action_pause_s = GRIPPER_NO_TOUCH_PAUSE_S;
+}
+
+static bool update_gripper_touch_wait(motion_controller_t *ctrl, float dt) {
+    float tx = 0.0f;
+    float ty = 0.0f;
+    float tz = 0.0f;
+    float fn = 0.0f;
+    float ft_sq = 0.0f;
+    bool wait_done = false;
+    bool is_grip_wait = false;
+    const char *wait_name = NULL;
+
+    if ((ctrl == NULL) || (ctrl->gripper_touch_wait_state == GRIPPER_TOUCH_WAIT_NONE)) {
+        return true;
+    }
+
+    if (!touch_monitor_enabled()) {
+        ctrl->gripper_action_pause_s = GRIPPER_NO_TOUCH_PAUSE_S;
+        clear_gripper_touch_wait(ctrl);
+        LOG_W("Touch unavailable during gripper wait, fallback to timeout pause");
+        return false;
+    }
+
+    if (!touch_refresh_filtered_sample()) {
+        if (!touch_monitor_enabled()) {
+            ctrl->gripper_action_pause_s = GRIPPER_NO_TOUCH_PAUSE_S;
+            clear_gripper_touch_wait(ctrl);
+            LOG_W("Touch refresh failed during gripper wait, fallback to timeout pause");
+            return false;
+        }
+        return false;
+    }
+
+    touch_get_centered_force(&tx, &ty, &tz);
+    fn = absf_local(tz);
+    ft_sq = vec2_norm_sq(tx, ty);
+    is_grip_wait = (ctrl->gripper_touch_wait_state == GRIPPER_TOUCH_WAIT_GRIP);
+    wait_name = is_grip_wait ? "GRIP" : "RELEASE";
+    wait_done = is_grip_wait
+                ? ((fn > TOUCH_GRASP_FN_THRESHOLD) && (ft_sq > TOUCH_GRASP_FT_THRESHOLD_SQ))
+                : ((fn < TOUCH_RELEASE_FN_THRESHOLD) && (ft_sq < TOUCH_RELEASE_FT_THRESHOLD_SQ));
+
+    ctrl->gripper_touch_wait_log_timer += dt;
+    if ((ctrl->gripper_touch_wait_log_timer >= TOUCH_LOG_INTERVAL_S) || wait_done) {
+        LOG_I("Touch %s wait: raw=(%.1f, %.1f, %.1f) centered=(%.1f, %.1f, %.1f) |Fn|=%.1f Ft_sq=%.1f ready=%u",
+              wait_name,
+              s_touch_handoff.raw_fx,
+              s_touch_handoff.raw_fy,
+              s_touch_handoff.raw_fz,
+              tx,
+              ty,
+              tz,
+              fn,
+              ft_sq,
+              wait_done ? 1U : 0U);
+        ctrl->gripper_touch_wait_log_timer = 0.0f;
+    }
+
+    if (!wait_done) {
+        return false;
+    }
+
+    if (!is_grip_wait) {
+        fsp_err_t err = servo_gripper_stop();
+        log_gripper_cmd_error("STOP", err);
+        set_gripper_hold_state(ctrl, GRIPPER_HOLD_IDLE);
+    }
+
+    clear_gripper_touch_wait(ctrl);
+    return true;
 }
 
 /**
@@ -796,7 +944,7 @@ static bool teach_should_unlock(const motion_controller_t *ctrl) {
         return false;
     }
 
-    for (uint8_t i = 0U; i < ROBSTRIDE_ACTIVE_JOINT_NUM; ++i) {
+    for (uint8_t i = 0U; i < MOTOR_ACTIVE_JOINT_NUM; ++i) {
         float q_fb = clamp_joint_position_to_nvm(k_joint_ids[i], get_motor_feedback(k_joint_ids[i])->position);
         if (absf_local(q_fb - ctrl->teach_lock_q[i]) > TEACH_UNLOCK_RAD) {
             return true;
@@ -816,7 +964,7 @@ static bool teach_all_joints_still(motion_controller_t *ctrl) {
         return false;
     }
 
-    for (uint8_t i = 0U; i < ROBSTRIDE_ACTIVE_JOINT_NUM; ++i) {
+    for (uint8_t i = 0U; i < MOTOR_ACTIVE_JOINT_NUM; ++i) {
         float q_fb = clamp_joint_position_to_nvm(k_joint_ids[i], get_motor_feedback(k_joint_ids[i])->position);
         if (absf_local(q_fb - ctrl->teach_prev_q[i]) > TEACH_STILL_RAD) {
             all_still = false;
@@ -834,7 +982,7 @@ static bool execute_teach_jog_hold_step(motion_controller_t *ctrl, const teach_j
         return false;
     }
 
-    if (!is_motor_id_valid(step->motor_id) ||
+    if (!motor_id_is_valid(step->motor_id) ||
         ((step->direction != -1) && (step->direction != 1)) ||
         !teach_jog_level_valid(step->step_level)) {
         LOG_W("Discarded invalid teach_jog hold: motor=%u dir=%d level=%u",
@@ -846,11 +994,11 @@ static bool execute_teach_jog_hold_step(motion_controller_t *ctrl, const teach_j
 
     motor_changed = (!ctrl->teach_jog_engaged || (ctrl->teach_jog_motor_id != step->motor_id));
 
-    if (step->motor_id == ROBSTRIDE_MOTOR_ID_GRIPPER) {
+    if (step->motor_id == MOTOR_ID_GRIPPER) {
         uint16_t applied_cmd = 0U;
         int32_t target_cmd = 0;
 
-        if (ctrl->teach_jog_engaged && is_joint_motor_id(ctrl->teach_jog_motor_id)) {
+        if (ctrl->teach_jog_engaged && motor_id_is_joint(ctrl->teach_jog_motor_id)) {
             (void) servo_stop_motor(ctrl->teach_jog_motor_id, false);
             ctrl->teach_jog_q_valid = false;
         }
@@ -885,12 +1033,12 @@ static bool execute_teach_jog_hold_step(motion_controller_t *ctrl, const teach_j
     }
 
     if (motor_changed && ctrl->teach_jog_engaged &&
-        is_joint_motor_id(ctrl->teach_jog_motor_id) &&
+        motor_id_is_joint(ctrl->teach_jog_motor_id) &&
         (ctrl->teach_jog_motor_id != step->motor_id)) {
         (void) servo_stop_motor(ctrl->teach_jog_motor_id, false);
         ctrl->teach_jog_q_valid = false;
     } else if (motor_changed && ctrl->teach_jog_engaged &&
-               (ctrl->teach_jog_motor_id == ROBSTRIDE_MOTOR_ID_GRIPPER)) {
+               (ctrl->teach_jog_motor_id == MOTOR_ID_GRIPPER)) {
         set_gripper_hold_state(ctrl, GRIPPER_HOLD_IDLE);
         reset_handoff_wait_internal(ctrl);
         (void) servo_gripper_stop();
@@ -916,8 +1064,8 @@ static bool execute_teach_jog_hold_step(motion_controller_t *ctrl, const teach_j
     }
 
     {
-        float q_target[ROBSTRIDE_ACTIVE_JOINT_NUM] = {0};
-        uint8_t idx = (uint8_t) (step->motor_id - ROBSTRIDE_MOTOR_ID_JOINT1);
+        float q_target[MOTOR_ACTIVE_JOINT_NUM] = {0};
+        uint8_t idx = (uint8_t) (step->motor_id - MOTOR_ID_JOINT1);
         float step_delta = k_teach_jog_joint_step_rad[step->step_level] * (float) step->direction;
         float q_next = ctrl->teach_jog_q_ref + step_delta;
 
@@ -993,6 +1141,17 @@ static void teach_control_loop(motion_controller_t *ctrl, float dt) {
 
     hold_active = run_teach_jog_hold(ctrl, dt);
 
+    if (ctrl->zero_force_mode) {
+        if (hold_active || ctrl->teach_jog_engaged) {
+            ctrl->zero_force_mode = false;
+        } else {
+            ctrl->teach_settle_s = 0.0f;
+            update_touch_handoff(ctrl, dt);
+            update_gripper_control(ctrl, dt);
+            return;
+        }
+    }
+
     if (!hold_active) {
         if (ctrl->teach_jog_engaged) {
             ctrl->teach_settle_s += dt;
@@ -1002,7 +1161,7 @@ static void teach_control_loop(motion_controller_t *ctrl, float dt) {
                 motion_ctrl_clear_teach_jog(ctrl, false);
                 LOG_I("Teach jog timeout relock triggered");
             }
-            update_touch_handoff(ctrl);
+            update_touch_handoff(ctrl, dt);
             update_gripper_control(ctrl, dt);
             return;
         }
@@ -1025,7 +1184,7 @@ static void teach_control_loop(motion_controller_t *ctrl, float dt) {
         ctrl->teach_settle_s = 0.0f;
     }
 
-    update_touch_handoff(ctrl);
+    update_touch_handoff(ctrl, dt);
     update_gripper_control(ctrl, dt);
 }
 
@@ -1039,7 +1198,6 @@ static void playback_control_loop(motion_controller_t *ctrl, float dt) {
     bool seg_done = false;
     bool seq_done = false;
     bool action_pause_armed = false;
-    static uint32_t s_track_log_div = 0U;
 
     if ((ctrl == NULL) || (ctrl->state != MOTION_STATE_PLAYBACK)) return;
 
@@ -1048,7 +1206,13 @@ static void playback_control_loop(motion_controller_t *ctrl, float dt) {
         if (ctrl->gripper_action_pause_s < 0.0f) {
             ctrl->gripper_action_pause_s = 0.0f;
         }
-        update_touch_handoff(ctrl);
+        update_touch_handoff(ctrl, dt);
+        update_gripper_control(ctrl, dt);
+        return;
+    }
+
+    if (!update_gripper_touch_wait(ctrl, dt)) {
+        update_touch_handoff(ctrl, dt);
         update_gripper_control(ctrl, dt);
         return;
     }
@@ -1060,7 +1224,7 @@ static void playback_control_loop(motion_controller_t *ctrl, float dt) {
     (void) v_target;
     (void) seg_done;
 
-    for (uint8_t i = 0U; i < ROBSTRIDE_ACTIVE_JOINT_NUM; ++i) {
+    for (uint8_t i = 0U; i < MOTOR_ACTIVE_JOINT_NUM; ++i) {
         q_target[i] = clamp_joint_position_to_nvm(k_joint_ids[i], q_target[i]);
     }
 
@@ -1068,15 +1232,6 @@ static void playback_control_loop(motion_controller_t *ctrl, float dt) {
 
     if (!send_joint_position_targets(q_target)) {
         LOG_E("Playback joint command failed");
-    }
-
-    if ((s_track_log_div++ % 20U) == 0U) {
-        LOG_D("Playback target deg: J1=%.2f J2=%.2f J3=%.2f J4=%.2f J5=%.2f",
-              q_target[0] * RAD2DEG_F,
-              q_target[1] * RAD2DEG_F,
-              q_target[2] * RAD2DEG_F,
-              q_target[3] * RAD2DEG_F,
-              q_target[4] * RAD2DEG_F);
     }
 
     if (ctrl->trajectory.total_segments > 0U) {
@@ -1087,13 +1242,15 @@ static void playback_control_loop(motion_controller_t *ctrl, float dt) {
                 uint8_t action = ctrl->trajectory.segments[seg][0].action;
                 if ((action == ACTION_GRIP) || (action == ACTION_RELEASE)) {
                     (void) trigger_gripper_action(ctrl, action);
-                    action_pause_armed = (ctrl->gripper_action_pause_s > 0.0f);
+                    action_pause_armed =
+                        (ctrl->gripper_action_pause_s > 0.0f) ||
+                        (ctrl->gripper_touch_wait_state != GRIPPER_TOUCH_WAIT_NONE);
                 }
             }
         }
     }
 
-    update_touch_handoff(ctrl);
+    update_touch_handoff(ctrl, dt);
     update_gripper_control(ctrl, dt);
 
     if (action_pause_armed || (ctrl->gripper_action_pause_s > 0.0f)) {
@@ -1117,7 +1274,7 @@ static void idle_control_loop(motion_controller_t *ctrl, float dt) {
     if (!ctrl->idle_lock_active && !lock_all_joints_current(ctrl)) {
         LOG_E("Idle lock command failed");
     }
-    update_touch_handoff(ctrl);
+    update_touch_handoff(ctrl, dt);
     update_gripper_control(ctrl, dt);
 }
 
@@ -1129,7 +1286,7 @@ static bool check_joint_torque_protection(motion_controller_t *ctrl) {
         return false;
     }
 
-    for (uint8_t i = 0U; i < ROBSTRIDE_ACTIVE_JOINT_NUM; ++i) {
+    for (uint8_t i = 0U; i < MOTOR_ACTIVE_JOINT_NUM; ++i) {
         float limit = ctrl->config.max_torque[i];
         float torque = get_motor_feedback(k_joint_ids[i])->torque;
         float torque_fb = absf_local(torque);
@@ -1196,7 +1353,7 @@ bool motion_ctrl_init(motion_controller_t *ctrl, const motion_ctrl_config_t *con
 }
 
 /**
- * @brief 将关节 1~4 切回串口舵机闭环模式
+ * @brief 将关节 1~5 切回串口舵机闭环模式
  */
 bool motion_ctrl_set_motion_mode(motion_controller_t *ctrl) {
     if ((ctrl == NULL) || !ctrl->is_initialized) {
@@ -1204,7 +1361,7 @@ bool motion_ctrl_set_motion_mode(motion_controller_t *ctrl) {
         return false;
     }
 
-    for (uint8_t i = 0U; i < ROBSTRIDE_ACTIVE_JOINT_NUM; ++i) {
+    for (uint8_t i = 0U; i < MOTOR_ACTIVE_JOINT_NUM; ++i) {
         if (servo_set_joint_servo_mode(k_joint_ids[i]) != FSP_SUCCESS) {
             LOG_E("Failed to set joint %u servo mode", (unsigned int) (i + 1U));
             return false;
@@ -1242,6 +1399,7 @@ bool motion_ctrl_start_teaching(motion_controller_t *ctrl) {
     reset_handoff_wait_internal(ctrl);
     ctrl->state = MOTION_STATE_TEACHING;
     ctrl->idle_lock_active = false;
+    ctrl->zero_force_mode = false;
     if (!enter_teach_lock(ctrl)) {
         ctrl->state = MOTION_STATE_IDLE;
         return false;
@@ -1325,9 +1483,31 @@ bool motion_ctrl_start_playback(motion_controller_t *ctrl, const action_sequence
     ctrl->gripper_action_pause_s = 0.0f;
     reset_handoff_wait_internal(ctrl);
     reset_torque_protection_state(ctrl);
+    ctrl->zero_force_mode = false;
     ctrl->state = MOTION_STATE_PLAYBACK;
     LOG_I("Playback mode started with %lu frames", (unsigned long) seq->frame_count);
     return true;
+}
+
+void motion_ctrl_enter_zero_force(motion_controller_t *ctrl) {
+    if ((ctrl == NULL) || !ctrl->is_initialized) return;
+
+    teach_jog_hold_clear();
+    set_gripper_hold_state(ctrl, GRIPPER_HOLD_IDLE);
+    reset_handoff_wait_internal(ctrl);
+    reset_teach_passive_state(ctrl);
+    clear_playback_upload_state(ctrl);
+    traj_reset(&ctrl->trajectory);
+    reset_teach_jog_ref(ctrl);
+    ctrl->teach_jog_engaged = false;
+    ctrl->seq_start_time = 0.0f;
+    ctrl->gripper_action_pause_s = 0.0f;
+    ctrl->idle_lock_active = false;
+    ctrl->zero_force_mode = true;
+    ctrl->state = MOTION_STATE_TEACHING;
+    reset_torque_protection_state(ctrl);
+    release_all_motors_zero_force_best_effort();
+    LOG_W("Motion controller switched to zero-force mode");
 }
 
 /**
@@ -1352,6 +1532,7 @@ void motion_ctrl_stop(motion_controller_t *ctrl) {
     traj_reset(&ctrl->trajectory);
     reset_teach_jog_ref(ctrl);
     ctrl->teach_jog_engaged = false;
+    ctrl->zero_force_mode = false;
     reset_torque_protection_state(ctrl);
     if (!lock_all_joints_current(ctrl)) {
         ctrl->idle_lock_active = false;
@@ -1367,16 +1548,16 @@ void motion_ctrl_clear_teach_jog(motion_controller_t *ctrl, bool stop_last_motor
     teach_jog_hold_cmd_t hold = {0};
     teach_jog_hold_read(&hold);
 
-    if ((ctrl != NULL) && is_motor_id_valid(ctrl->teach_jog_motor_id)) {
+    if ((ctrl != NULL) && motor_id_is_valid(ctrl->teach_jog_motor_id)) {
         motor_id = ctrl->teach_jog_motor_id;
-    } else if (hold.active && is_motor_id_valid(hold.motor_id)) {
+    } else if (hold.active && motor_id_is_valid(hold.motor_id)) {
         motor_id = hold.motor_id;
     }
 
     teach_jog_hold_clear();
 
-    if (stop_last_motor && is_motor_id_valid(motor_id)) {
-        if (motor_id == ROBSTRIDE_MOTOR_ID_GRIPPER) {
+    if (stop_last_motor && motor_id_is_valid(motor_id)) {
+        if (motor_id == MOTOR_ID_GRIPPER) {
             set_gripper_hold_state(ctrl, GRIPPER_HOLD_IDLE);
             reset_handoff_wait_internal(ctrl);
             (void) servo_gripper_stop();
@@ -1475,21 +1656,16 @@ motion_state_t motion_ctrl_get_state(const motion_controller_t *ctrl) {
  */
 
 /* -------------------------------------------------------------------------- */
-/* 兼容参数接口                                                                 */
-/* 保留旧的 kp/kd 参数设置接口，保证上层调用不需要改名；新串口方案下这些参数主要   */
-/* 作为配置兼容字段保存，不再直接映射到底层舵机协议。                           */
-/* -------------------------------------------------------------------------- */
-/* 兼容参数接口                                                                 */
+/* 兼容参数接口                                                                */
 /*                                                                            */
-/* 保留旧的 kp/kd 参数设置接口，以保证上层调用不需要改名；在新串口方案下，这些   */
-/* 参数主要作为配置兼容字段保存，不再直接映射到底层舵机协议。                   */
+/* 新串口方案下 kp/kd 参数主要作为配置兼容字段保存，不直接映射到底层舵机协议。  */
 /* -------------------------------------------------------------------------- */
 /**
  * @brief 保存示教模式兼容参数
  */
 void motion_ctrl_set_teach_params(motion_controller_t *ctrl,
-                                  const float kp[ROBSTRIDE_JOINT_NUM],
-                                  const float kd[ROBSTRIDE_JOINT_NUM],
+                                  const float kp[MOTOR_JOINT_NUM],
+                                  const float kd[MOTOR_JOINT_NUM],
                                   bool enable_joint1) {
     motion_ctrl_set_common_pd(ctrl, kp, kd);
     (void) enable_joint1;
@@ -1499,8 +1675,8 @@ void motion_ctrl_set_teach_params(motion_controller_t *ctrl,
  * @brief 保存回放模式兼容参数
  */
 void motion_ctrl_set_playback_params(motion_controller_t *ctrl,
-                                     const float kp[ROBSTRIDE_JOINT_NUM],
-                                     const float kd[ROBSTRIDE_JOINT_NUM]) {
+                                     const float kp[MOTOR_JOINT_NUM],
+                                     const float kd[MOTOR_JOINT_NUM]) {
     motion_ctrl_set_common_pd(ctrl, kp, kd);
 }
 
@@ -1525,6 +1701,7 @@ void motion_ctrl_clear_emergency_stop(motion_controller_t *ctrl) {
 
     ctrl->emergency_stop = false;
     capture_hold_refs(ctrl);
+    ctrl->zero_force_mode = false;
     reset_torque_protection_state(ctrl);
     LOG_I("Emergency stop cleared");
 }

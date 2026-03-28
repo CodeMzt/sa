@@ -11,8 +11,8 @@
 #define MIC_GAIN            16
 #define MIC_RAW_BUFFER_SIZE (MIC_FRAME_SAMPLES * 2)
 
-static int32_t audio_rx_buffer[2][MIC_RAW_BUFFER_SIZE];
-static int16_t audio_read_buffer[2][BLOCK_SIZE];
+static int32_t audio_rx_buffer[2][MIC_RAW_BUFFER_SIZE] __attribute__((section(".sram1_buffer"), aligned(4)));
+static int16_t audio_read_buffer[2][BLOCK_SIZE] __attribute__((section(".sram1_buffer"), aligned(2)));
 
 static volatile uint8_t dtc_buffer_index = 0;
 static volatile uint8_t read_buffer_index = 1;
@@ -95,4 +95,3 @@ void i2s0_callback(i2s_callback_args_t *p_args) {
         mic_driver_instance.callback();
     }
 }
-

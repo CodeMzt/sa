@@ -17,7 +17,7 @@
 #define INFERENCE_STRIDE   2000
 #define DECISION_WINDOW    EI_CLASSIFIER_DSP_INPUT_FRAME_SIZE
 
-static int16_t audio_buffer[AUDIO_BUFFER_SIZE];
+static int16_t audio_buffer[AUDIO_BUFFER_SIZE] __attribute__((section(".sram1_buffer"), aligned(2)));
 static uint32_t buf_write_index = 0;
 static bool buffer_full_enough = false;
 

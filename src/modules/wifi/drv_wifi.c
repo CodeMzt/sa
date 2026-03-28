@@ -11,7 +11,7 @@
 #include "nvm_config.h"
 #include "sys_log.h"
 #include "shared_data.h"
-#include "robstride_motor.h"
+#include "motor_state.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -40,16 +40,16 @@
 #define TEACH_JOG_STEP_LEVEL_MAX    2U
 
 /* ---- 静态缓冲 ---- */
-static volatile char     rx_buf[RX_BUF_SIZE];
+static volatile char     rx_buf[RX_BUF_SIZE] __attribute__((section(".sram1_buffer")));
 static volatile uint16_t rx_idx;
 static volatile uint8_t  rx_state;          /**< 2 = 收到完整 \r\n 帧 */
 static volatile uint32_t isr_rx_count;
 static volatile uint32_t pending_frame_start_tick = 0;  /**< 不完整帧首次等待的时刻 */
 static volatile bool     tx_done = true;
 
-static char  tx_buf[TX_BUF_SIZE];
-static char  line[RX_BUF_SIZE];             /**< static 避免爆栈 */
-static char  cmd_stream_buf[RX_BUF_SIZE];
+static char  tx_buf[TX_BUF_SIZE] __attribute__((section(".sram1_buffer")));
+static char  line[RX_BUF_SIZE] __attribute__((section(".sram1_buffer")));
+static char  cmd_stream_buf[RX_BUF_SIZE] __attribute__((section(".sram1_buffer")));
 static size_t cmd_stream_len = 0U;
 static int   active_sock = -1;
 static bool  wifi_active = false;
@@ -245,10 +245,8 @@ uint8_t wifi_init_ap_server(void) {
         open_err = g_uart_wifi.p_api->open(g_uart_wifi.p_ctrl, g_uart_wifi.p_cfg);
         if (open_err != FSP_SUCCESS) return false;
     }
-    LOG_D("WIFI UART opened.");
-
     for (uint8_t n = 10; n; n--)
-        if (send_at("AT+\r\n", "+OK", 500)) { LOG_D("W800 ready."); break; }
+        if (send_at("AT+\r\n", "+OK", 500)) { break; }
         else if (n == 1) return false;
 
     bool ok = true;
@@ -334,8 +332,6 @@ void wifi_process_commands(void) {
     size_t len = strlen(line);
     if (!len) return;
 
-    LOG_D("[RX] len=%d", (int)len);
-
     /* 提取 SKTRPT → JSON stream */
     if (strncmp(line, "+SKTRPT=", 8) == 0) {
         int dlen = 0;
@@ -358,7 +354,6 @@ void wifi_process_commands(void) {
     }
 
     while (len && (line[len - 1] == '\r' || line[len - 1] == '\n')) line[--len] = '\0';
-    LOG_D("[RX] ignored: %.60s", line);
 }
 
 static void dispatch_json_stream(const char *chunk, size_t chunk_len) {
@@ -426,8 +421,6 @@ static bool match_cmd(const char *js, const char *cmd) {
  * @param js JSON 字符串
  */
 static void handle_json(const char *js) {
-    LOG_D("[CMD] %.80s", js);
-
     if (match_cmd(js, "ping")) {
         send_json("{\"type\":\"pong\",\"ok\":true}");
         return;
@@ -575,7 +568,7 @@ static void handle_json(const char *js) {
             return;
         }
 
-        if (motor_id_u32 < ROBSTRIDE_MOTOR_ID_JOINT1 || motor_id_u32 > ROBSTRIDE_MOTOR_ID_GRIPPER) {
+        if (motor_id_u32 < MOTOR_ID_JOINT1 || motor_id_u32 > MOTOR_ID_GRIPPER) {
             send_error("teach_jog_hold_start", "invalid_motor_id");
             return;
         }
@@ -615,7 +608,7 @@ static void handle_json(const char *js) {
 static void send_json(const char *json_str) {
     if (active_sock < 0) { LOG_W("send_json: no socket"); return; }
 
-    static char send_buf[TX_BUF_SIZE];
+    static char send_buf[TX_BUF_SIZE] __attribute__((section(".sram1_buffer")));
     size_t jlen = strlen(json_str);
     if (jlen + 2 > TX_BUF_SIZE) { LOG_W("send_json: too large"); jlen = TX_BUF_SIZE - 2; }
     memcpy(send_buf, json_str, jlen);

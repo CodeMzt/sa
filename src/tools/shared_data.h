@@ -10,7 +10,7 @@
 
 #include <stddef.h>
 #include "hal_data.h"
-#include "robstride_motor.h"
+#include "motor_state.h"
 
 /* 器械枚举 */
 typedef enum {
@@ -50,8 +50,8 @@ typedef struct {
 extern volatile system_status_t g_sys_status;
 extern volatile bool g_log_system_ready;
 
-/* 全局电机数组（由 robstride_motor.c 定义，此处导出） */
-extern robstride_motor_t g_motors[ROBSTRIDE_MOTOR_NUM];
+/* 全局电机数组（由 motor_state.c 定义，此处导出） */
+extern motor_t g_motors[MOTOR_NUM];
 
 /* 发送命令队列 */
 extern QueueHandle_t can_tx_queue;

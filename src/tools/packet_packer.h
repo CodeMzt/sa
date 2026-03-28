@@ -12,7 +12,7 @@
 #include <string.h> // for memcpy
 #include "shared_data.h"
 
-#define MOTOR_PACKET_MOTOR_COUNT   ROBSTRIDE_ACTIVE_MOTOR_NUM
+#define MOTOR_PACKET_MOTOR_COUNT   MOTOR_ACTIVE_MOTOR_NUM
 #define MOTOR_PACKET_HEADER_SIZE   2U
 #define MOTOR_PACKET_FLOAT_SIZE    4U
 #define MOTOR_PACKET_CHECKSUM_SIZE 1U

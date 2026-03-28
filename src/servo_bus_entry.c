@@ -120,7 +120,7 @@ static fsp_err_t servo_arm_init(motion_ctrl_config_t *config) {
     }
 
     memset(config, 0, sizeof(*config));
-    for (uint8_t i = 0U; i < ROBSTRIDE_JOINT_NUM; ++i) {
+    for (uint8_t i = 0U; i < MOTOR_JOINT_NUM; ++i) {
         config->controller.kp[i] = 8.0f;
         config->controller.kd[i] = 0.5f;
         config->max_torque[i] = (sys_cfg != NULL)
@@ -503,14 +503,14 @@ void servo_bus_entry(void *pvParameters) {
         servo_link_check();
         if (!servo_is_connected()) {
             if (!link_warned) {
-                LOG_W("Motion link lost, controller forced to IDLE");
+                LOG_W("Motion link lost, controller forced to zero-force mode");
                 servo_log_link_diagnostics();
                 link_warned = true;
             }
 
             motion_ctrl_clear_teach_jog(&g_motion_ctrl, false);
-            if (g_motion_ctrl.state != MOTION_STATE_IDLE) {
-                motion_ctrl_stop(&g_motion_ctrl);
+            if (!g_motion_ctrl.zero_force_mode) {
+                motion_ctrl_enter_zero_force(&g_motion_ctrl);
             }
             reset_pb_ctx();
             continue;

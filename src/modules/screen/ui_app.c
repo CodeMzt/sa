@@ -193,7 +193,7 @@ void ui_update_status(void) {
 /* 样式定义                                                                   */
 /* -------------------------------------------------------------------------- */
 
-#define TEACH_ZERO_BUTTON_NUM ROBSTRIDE_ACTIVE_MOTOR_NUM
+#define TEACH_ZERO_BUTTON_NUM MOTOR_ACTIVE_MOTOR_NUM
 
 typedef struct {
     uint8_t idx;
@@ -1012,12 +1012,12 @@ static void create_teach_zero_page(void) {
     lv_obj_set_style_grid_row_dsc_array(cont, row_dsc, 0);
 
     static const uint8_t motor_ids[TEACH_ZERO_BUTTON_NUM] = {
-        ROBSTRIDE_MOTOR_ID_JOINT1,
-        ROBSTRIDE_MOTOR_ID_JOINT2,
-        ROBSTRIDE_MOTOR_ID_JOINT3,
-        ROBSTRIDE_MOTOR_ID_JOINT4,
-        ROBSTRIDE_MOTOR_ID_JOINT5,
-        ROBSTRIDE_MOTOR_ID_GRIPPER,
+        MOTOR_ID_JOINT1,
+        MOTOR_ID_JOINT2,
+        MOTOR_ID_JOINT3,
+        MOTOR_ID_JOINT4,
+        MOTOR_ID_JOINT5,
+        MOTOR_ID_GRIPPER,
     };
 
     static const char * btn_texts[TEACH_ZERO_BUTTON_NUM] = {
@@ -1155,7 +1155,7 @@ static void create_teach_monitor_page(void) {
     /* === 电机数据显示表格 === */
     lv_obj_t * table = lv_table_create(lv_scr_act());
     lv_table_set_col_cnt(table, 5);
-    lv_table_set_row_cnt(table, ROBSTRIDE_MOTOR_NUM + 1U);
+    lv_table_set_row_cnt(table, MOTOR_NUM + 1U);
     lv_obj_set_width(table, 310);
     lv_obj_align(table, LV_ALIGN_TOP_MID, 0, 70);
 
@@ -1168,8 +1168,8 @@ static void create_teach_monitor_page(void) {
 
     /* 电机数据行（初始为零） */
     char buf[16];
-    for (int i = 0; i < ROBSTRIDE_MOTOR_NUM; i++) {
-        if (i < ROBSTRIDE_JOINT_NUM) {
+    for (int i = 0; i < MOTOR_NUM; i++) {
+        if (i < MOTOR_JOINT_NUM) {
             snprintf(buf, sizeof(buf), "M%d", i + 1);
         } else {
             snprintf(buf, sizeof(buf), "GRIP");
@@ -1218,7 +1218,7 @@ static void teach_monitor_update_cb(lv_timer_t * timer) {
 
     char buf[16];
     /* 从 g_motors 读取数据并更新表格 */
-    for (int i = 0; i < ROBSTRIDE_MOTOR_NUM; i++) {
+    for (int i = 0; i < MOTOR_NUM; i++) {
         /* 位置（弧度转角度） */
         float pos = g_motors[i].feedback.position * RAD2DEG_F;
         snprintf(buf, sizeof(buf), "%.2f", pos);
@@ -1361,7 +1361,7 @@ static void create_teach_record_frames_page(uint8_t group_idx) {
     lv_obj_set_style_pad_all(angle_box, 2, 0);
     lv_obj_clear_flag(angle_box, LV_OBJ_FLAG_SCROLLABLE);
 
-    static lv_obj_t * g_angle_labels[ROBSTRIDE_ACTIVE_JOINT_NUM] = {NULL};
+    static lv_obj_t * g_angle_labels[MOTOR_ACTIVE_JOINT_NUM] = {NULL};
     char buf[16];
     static lv_coord_t col_dsc_angle[] = {58, 58, 58, 58, 58, LV_GRID_TEMPLATE_LAST};
     static lv_coord_t row_dsc_angle[] = {40, LV_GRID_TEMPLATE_LAST};
@@ -1369,7 +1369,7 @@ static void create_teach_record_frames_page(uint8_t group_idx) {
     lv_obj_set_style_grid_column_dsc_array(angle_box, col_dsc_angle, 0);
     lv_obj_set_style_grid_row_dsc_array(angle_box, row_dsc_angle, 0);
 
-    for (int i = 0; i < ROBSTRIDE_ACTIVE_JOINT_NUM; i++) {
+    for (int i = 0; i < MOTOR_ACTIVE_JOINT_NUM; i++) {
         snprintf(buf, sizeof(buf), "M%d\n0.0", i+1);
         g_angle_labels[i] = lv_label_create(angle_box);
         lv_label_set_text(g_angle_labels[i], buf);
@@ -1498,7 +1498,7 @@ static void teach_record_angle_update_cb(lv_timer_t * timer) {
     if (!labels) return;
 
     char buf[16];
-    for (int i = 0; i < ROBSTRIDE_ACTIVE_JOINT_NUM; i++) {
+    for (int i = 0; i < MOTOR_ACTIVE_JOINT_NUM; i++) {
         if (labels[i] && lv_obj_is_valid(labels[i])) {
             float angle = g_motors[i].feedback.position * RAD2DEG_F;
             snprintf(buf, sizeof(buf), "M%d:%.1f", i+1, angle);
